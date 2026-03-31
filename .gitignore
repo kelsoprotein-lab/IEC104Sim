@@ -24,4 +24,5 @@ Thumbs.db
 *.swo
 
 # claude
-./claude
+/.claude/
+/openspec/
