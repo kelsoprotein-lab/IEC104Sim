@@ -1,8 +1,8 @@
-# IEC 104 Simulator
+# IEC 60870-5-104 Simulator
 
 [中文版](README_CN.md)
 
-A cross-platform IEC 60870-5-104 protocol simulator built with **Rust** + **Tauri** + **Vue 3**, featuring both a Slave (server) and Master (client) application.
+A cross-platform IEC 60870-5-104 protocol simulate built with **Rust** + **Tauri** + **Vue 3**, featuring both a Slave (server) and Master (client) application.
 
 ## Features
 

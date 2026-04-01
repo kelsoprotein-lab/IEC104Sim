@@ -1,8 +1,8 @@
-# IEC 104 模拟器
+# IEC 60870-5-104 Simulator
 
 [English](README.md)
 
-基于 **Rust** + **Tauri** + **Vue 3** 构建的跨平台 IEC 60870-5-104 协议模拟器，包含从站（Slave）和主站（Master）两个独立应用。
+基于 **Rust** + **Tauri** + **Vue 3** 构建的跨平台 IEC 60870-5-104 协议仿真工具，包含从站（Slave）和主站（Master）两个独立应用。
 
 ## 功能特性
 
