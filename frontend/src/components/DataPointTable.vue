@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, watch, computed, nextTick, onUnmounted, shallowRef, type Ref } from 'vue'
+import { ref, inject, watch, computed, nextTick, onMounted, onUnmounted, shallowRef, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
@@ -126,7 +126,29 @@ watch(dataRefreshKey, () => {
   }
 })
 
+// === Auto-polling: refresh data points every 2s to pick up control command changes ===
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(() => {
+    if (currentServerId && currentCA !== null) {
+      loadDataPoints()
+    }
+  }, 2000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onMounted(() => { startPolling() })
+
 onUnmounted(() => {
+  stopPolling()
   for (const t of changeTimers.values()) clearTimeout(t)
 })
 

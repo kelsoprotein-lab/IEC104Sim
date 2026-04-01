@@ -463,28 +463,22 @@ impl SlaveServer {
                                 let mut wh = wh;
                                 loop {
                                     if flag_for_writer.load(std::sync::atomic::Ordering::SeqCst) { break; }
-                                    let bytes = queue_for_writer.lock().await;
-                                    if !bytes.is_empty() {
-                                        // Drain all pending bytes.
-                                        let mut drain_idx = 0;
-                                        while drain_idx < bytes.len() {
-                                            match wh.write_all(&bytes[drain_idx..]).await {
-                                                Ok(()) => {
-                                                    drain_idx = bytes.len();
-                                                }
-                                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                                                }
-                                                Err(_) => {
-                                                    conn_for_writer.write().await.remove(&addr_for_read);
-                                                    return;
-                                                }
+                                    // Atomically drain pending bytes under lock, then write outside lock
+                                    let snapshot = {
+                                        let mut bytes = queue_for_writer.lock().await;
+                                        if bytes.is_empty() { Vec::new() } else { bytes.drain(..).collect::<Vec<u8>>() }
+                                    };
+                                    if !snapshot.is_empty() {
+                                        match wh.write_all(&snapshot).await {
+                                            Ok(()) => {}
+                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                                            }
+                                            Err(_) => {
+                                                conn_for_writer.write().await.remove(&addr_for_read);
+                                                return;
                                             }
                                         }
-                                        drop(bytes);
-                                        queue_for_writer.lock().await.clear();
-                                    } else {
-                                        drop(bytes);
                                     }
                                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                 }
@@ -515,6 +509,9 @@ impl SlaveServer {
     pub async fn stop(&mut self) -> Result<(), SlaveError> {
         if self.state == ServerState::Stopped { return Err(SlaveError::NotRunning); }
         self.shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Connect briefly to unblock listener.accept()
+        let addr = format!("{}:{}", self.transport.bind_address, self.transport.port);
+        let _ = tokio::net::TcpStream::connect(&addr).await;
         if let Some(h) = self.server_handle.take() { let _ = h.await; }
         if let Some(h) = self.cyclic_handle.take() { let _ = h.await; }
         self.state = ServerState::Stopped;
@@ -546,7 +543,8 @@ async fn handleClientReadLoop(
     queue: SharedQueue,
     peer_addr: SocketAddr,
 ) {
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 8192];
+    let mut reassembly_buf: Vec<u8> = Vec::with_capacity(65536);
     let mut ssn: u8 = 0;
     let mut rsn: u8 = 0;
 
@@ -560,10 +558,21 @@ async fn handleClientReadLoop(
             Err(_) => break,
         };
 
-        let data = &buf[..n];
+        reassembly_buf.extend_from_slice(&buf[..n]);
+
+        // Extract and process complete frames from the reassembly buffer
+        while reassembly_buf.len() >= 2 {
+            if reassembly_buf[0] != 0x68 {
+                reassembly_buf.remove(0);
+                continue;
+            }
+            let frame_len = reassembly_buf[1] as usize + 2;
+            if reassembly_buf.len() < frame_len { break; }
+            let data: Vec<u8> = reassembly_buf.drain(..frame_len).collect();
+            let n = data.len();
 
         if let Some(ref lc) = log_collector {
-            if let Ok(frame) = crate::frame::parse_apci(data) {
+            if let Ok(frame) = crate::frame::parse_apci(&data) {
                 let summary = crate::frame::format_frame_summary(&frame);
                 lc.try_add(LogEntry::with_raw_bytes(
                     Direction::Rx, FrameLabel::IFrame(summary.clone()),
@@ -700,6 +709,17 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                // Send spontaneous update (COT=3) after control execution
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -728,6 +748,16 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -758,6 +788,16 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -789,6 +829,16 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -818,6 +868,16 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -847,6 +907,16 @@ async fn handleClientReadLoop(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 queue.lock().await.extend_from_slice(&term);
+                                let sr = stations.read().await;
+                                if let Some(st) = sr.get(&ca) {
+                                    if let Some(point) = st.data_points.get(ioa) {
+                                        let ca_b = ca.to_le_bytes();
+                                        let ioa_b = ioa.to_le_bytes();
+                                        let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                        let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                        queue.lock().await.extend_from_slice(&spont);
+                                    }
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -868,6 +938,7 @@ async fn handleClientReadLoop(
                 }
             }
         }
+        } // end while reassembly_buf
     }
 
     connections.write().await.remove(&peer_addr);
@@ -1061,6 +1132,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1095,6 +1181,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1131,6 +1232,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1168,6 +1284,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1203,6 +1334,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1238,6 +1384,21 @@ fn handleClientBlocking(
                             if !is_select {
                                 let mut term = data[..n].to_vec(); term[8] = 10;
                                 let _ = stream.write_all(&term);
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let stations = stations.clone();
+                                    handle.block_on(async {
+                                        let sr = stations.read().await;
+                                        if let Some(st) = sr.get(&ca) {
+                                            if let Some(point) = st.data_points.get(ioa) {
+                                                let ca_b = ca.to_le_bytes();
+                                                let ioa_b = ioa.to_le_bytes();
+                                                let mut s0: u8 = 0; let mut r0: u8 = 0;
+                                                let spont = encode_point_frame(&point.value, 3, &ca_b, &ioa_b[..3], &mut s0, &mut r0);
+                                                let _ = stream.write_all(&spont);
+                                            }
+                                        }
+                                    });
+                                }
                             }
                             if let Some(ref lc) = log_collector {
                                 let mode = if is_select { "Select" } else { "Execute" };
@@ -1378,7 +1539,7 @@ mod tests {
     #[test]
     fn test_station_with_default_points() {
         let s = Station::with_default_points(1, "站1", 10);
-        assert_eq!(s.data_points.len(), 60);
+        assert_eq!(s.data_points.len(), 80); // 8 categories * 10 points each
     }
 
     #[tokio::test]
