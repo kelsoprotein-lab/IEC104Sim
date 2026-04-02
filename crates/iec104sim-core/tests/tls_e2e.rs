@@ -133,3 +133,107 @@ fn test_cert_generation() {
     assert!(paths.client_cert.exists());
     assert!(paths.client_key.exists());
 }
+
+// =========================================================================
+// Module: capture — Packet capture with tcpdump + analysis with tshark
+// =========================================================================
+
+mod capture {
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+
+    pub struct PacketCapture {
+        child: Child,
+        pub pcap_path: PathBuf,
+    }
+
+    /// Start tcpdump capturing on loopback for the given port.
+    pub fn start(test_name: &str, port: u16) -> Result<PacketCapture, String> {
+        let pcap_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pcap");
+        std::fs::create_dir_all(&pcap_dir).map_err(|e| format!("create pcap dir: {}", e))?;
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let pcap_path = pcap_dir.join(format!("{}_{}.pcap", test_name, timestamp));
+
+        let child = Command::new("tcpdump")
+            .args([
+                "-i", "lo0",
+                "-w", pcap_path.to_str().unwrap(),
+                "-s", "0",
+                &format!("port {}", port),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("spawn tcpdump: {} (need BPF permissions — try: brew install --cask wireshark)", e))?;
+
+        Ok(PacketCapture { child, pcap_path })
+    }
+
+    impl PacketCapture {
+        /// Stop capturing. Sends SIGTERM and waits for tcpdump to flush.
+        pub fn stop(&mut self) -> Result<(), String> {
+            unsafe {
+                libc::kill(self.child.id() as i32, libc::SIGTERM);
+            }
+            self.child.wait().map_err(|e| format!("wait tcpdump: {}", e))?;
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Ok(())
+        }
+    }
+
+    /// Assert that the pcap contains a valid TLS session:
+    /// 1. TLS handshake present (ClientHello + ServerHello)
+    /// 2. No plaintext IEC 104 frames visible
+    /// 3. Encrypted application data present
+    pub fn assert_tls_encrypted(pcap_path: &Path, port: u16) {
+        let pcap = pcap_path.to_str().unwrap();
+
+        // 1. Check TLS handshake exists
+        let output = Command::new("tshark")
+            .args(["-r", pcap, "-Y", "tls.handshake", "-T", "fields", "-e", "tls.handshake.type"])
+            .output()
+            .expect("failed to run tshark");
+        let handshake_types = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            handshake_types.contains("1"),
+            "No ClientHello found in pcap: {}\ntshark output: {}",
+            pcap, handshake_types
+        );
+        assert!(
+            handshake_types.contains("2"),
+            "No ServerHello found in pcap: {}\ntshark output: {}",
+            pcap, handshake_types
+        );
+
+        // 2. Check no plaintext IEC 104 is visible
+        let output = Command::new("tshark")
+            .args(["-r", pcap, "-Y", "iec60870_104", "-T", "fields", "-e", "frame.number"])
+            .output()
+            .expect("failed to run tshark");
+        let iec104_frames = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            iec104_frames.is_empty(),
+            "Plaintext IEC 104 frames leaked through TLS! pcap: {}\nFrame numbers: {}",
+            pcap, iec104_frames
+        );
+
+        // 3. Check encrypted application data exists
+        let output = Command::new("tshark")
+            .args([
+                "-r", pcap,
+                "-Y", &format!("tls.record.content_type == 23 && tcp.port == {}", port),
+                "-T", "fields", "-e", "frame.number",
+            ])
+            .output()
+            .expect("failed to run tshark");
+        let app_data = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            !app_data.is_empty(),
+            "No encrypted application data found in pcap: {}",
+            pcap
+        );
+
+        eprintln!("  TLS assertions passed. pcap: {}", pcap);
+    }
+}
