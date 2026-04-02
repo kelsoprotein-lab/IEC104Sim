@@ -26,3 +26,6 @@ Thumbs.db
 # claude
 /.claude/
 /openspec/
+
+# Packet captures from TLS tests
+crates/iec104sim-core/tests/pcap/
