@@ -58,6 +58,8 @@ pub async fn create_server(
             key_file: request.key_file.unwrap_or_default(),
             ca_file: request.ca_file.unwrap_or_default(),
             require_client_cert: request.require_client_cert.unwrap_or(false),
+            pkcs12_file: String::new(),
+            pkcs12_password: String::new(),
         },
     };
 

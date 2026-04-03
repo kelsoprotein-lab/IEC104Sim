@@ -58,6 +58,8 @@ pub async fn create_connection(
             ca_file: request.ca_file.unwrap_or_default(),
             cert_file: request.cert_file.unwrap_or_default(),
             key_file: request.key_file.unwrap_or_default(),
+            pkcs12_file: String::new(),
+            pkcs12_password: String::new(),
             accept_invalid_certs: request.accept_invalid_certs.unwrap_or(false),
         },
     };
