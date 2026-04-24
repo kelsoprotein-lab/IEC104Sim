@@ -327,6 +327,7 @@ async fn test_tls_handshake_one_way() {
             pkcs12_file: String::new(),
             pkcs12_password: String::new(),
             accept_invalid_certs: false,
+            version: iec104sim_core::master::TlsVersionPolicy::default(),
         },
         ..Default::default()
     };
@@ -394,6 +395,7 @@ async fn test_tls_handshake_mtls() {
             pkcs12_file: paths.client_pkcs12.to_str().unwrap().to_string(),
             pkcs12_password: cert_gen::PKCS12_PASS.to_string(),
             accept_invalid_certs: false,
+            version: iec104sim_core::master::TlsVersionPolicy::default(),
         },
         ..Default::default()
     };
@@ -511,6 +513,7 @@ async fn test_tls_full_protocol() {
             pkcs12_file: String::new(),
             pkcs12_password: String::new(),
             accept_invalid_certs: false,
+            version: iec104sim_core::master::TlsVersionPolicy::default(),
         },
         ..Default::default()
     };
@@ -578,6 +581,7 @@ async fn test_tls_mtls_full_protocol() {
             pkcs12_file: paths.client_pkcs12.to_str().unwrap().to_string(),
             pkcs12_password: cert_gen::PKCS12_PASS.to_string(),
             accept_invalid_certs: false,
+            version: iec104sim_core::master::TlsVersionPolicy::default(),
         },
         ..Default::default()
     };
