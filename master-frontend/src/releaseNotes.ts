@@ -4,7 +4,6 @@ export const RELEASES_URL = 'https://github.com/kelsoprotein-lab/IEC104Sim/relea
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '修复: 从站端口关闭后,主站连接状态不更新且无法重连',
-  '修复: 在输入框内拖选文字到弹窗外松开鼠标会误关弹窗',
-  '改进: 使用 watch 通道统一主站状态变更通知,简化核心实现',
+  '修复: 共用同一 IOA 的浮点与累计量互相覆盖,导致总召唤/累计量召唤后历史值消失',
+  '修复: 多连接场景下,一个连接的召唤数据会串扰到其他(已断开)连接的树节点',
 ]

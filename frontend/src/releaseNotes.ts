@@ -4,5 +4,5 @@ export const RELEASES_URL = 'https://github.com/kelsoprotein-lab/IEC104Sim/relea
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '修复: 在输入框内拖选文字到弹窗外松开鼠标会误关弹窗',
+  '本版本主要为主站 (IEC104 Master) 修复数据展示 bug,从站端无功能变化',
 ]

@@ -41,12 +41,12 @@ function refreshData() {
 }
 provide('refreshData', refreshData)
 
-// Changed categories for tree flash effect
-const changedCategories = ref<Set<string>>(new Set())
+// Per-connection tree flash effect: connId -> set of changed category labels
+const changedCategories = ref<Map<string, Set<string>>>(new Map())
 provide('changedCategories', changedCategories)
 
-// Realtime category counts derived from DataTable's dataMap
-const categoryCounts = ref<Map<string, number>>(new Map())
+// Per-connection category counts: connId -> Map<categoryLabel, count>
+const categoryCounts = ref<Map<string, Map<string, number>>>(new Map())
 provide('categoryCounts', categoryCounts)
 
 provide(dialogKey, { showAlert, showConfirm, showPrompt })

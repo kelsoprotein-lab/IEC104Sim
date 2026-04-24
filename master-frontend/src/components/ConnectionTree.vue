@@ -10,26 +10,30 @@ const emit = defineEmits<{
 
 const treeRefreshKey = inject<Ref<number>>('treeRefreshKey')!
 const refreshTree = inject<() => void>('refreshTree')!
-const changedCategories = inject<Ref<Set<string>>>('changedCategories')!
-const sharedCategoryCounts = inject<Ref<Map<string, number>>>('categoryCounts')!
+const changedCategories = inject<Ref<Map<string, Set<string>>>>('changedCategories')!
+const sharedCategoryCounts = inject<Ref<Map<string, Map<string, number>>>>('categoryCounts')!
 
-// Local flash state for categories
+// Local flash state: keyed by "${connId}|${categoryLabel}" to keep flashes per-connection.
 const flashingCategories = ref<Set<string>>(new Set())
 const flashTimers = new Map<string, number>()
+const flashKey = (connId: string, cat: string) => `${connId}|${cat}`
 
-watch(changedCategories, (cats) => {
-  if (cats.size === 0) return
-  for (const cat of cats) {
-    flashingCategories.value.add(cat)
-    const prev = flashTimers.get(cat)
-    if (prev) clearTimeout(prev)
-    flashTimers.set(cat, window.setTimeout(() => {
-      flashingCategories.value.delete(cat)
-      flashTimers.delete(cat)
-    }, 3000))
+watch(changedCategories, (map) => {
+  if (map.size === 0) return
+  for (const [connId, cats] of map) {
+    for (const cat of cats) {
+      const key = flashKey(connId, cat)
+      flashingCategories.value.add(key)
+      const prev = flashTimers.get(key)
+      if (prev) clearTimeout(prev)
+      flashTimers.set(key, window.setTimeout(() => {
+        flashingCategories.value.delete(key)
+        flashTimers.delete(key)
+      }, 3000))
+    }
   }
-  // Clear the shared set after consuming
-  changedCategories.value = new Set()
+  // Clear after consuming
+  changedCategories.value = new Map()
 })
 
 onUnmounted(() => {
@@ -51,7 +55,6 @@ const DATA_CATEGORIES = [
 interface TreeConnection {
   info: ConnectionInfo
   expanded: boolean
-  categoryCounts: Map<string, number>
 }
 
 const connections = ref<TreeConnection[]>([])
@@ -62,20 +65,38 @@ const contextMenu = ref<{ visible: boolean; x: number; y: number; connId: string
   visible: false, x: 0, y: 0, connId: ''
 })
 
+// Per-connection count lookup — read from the scoped shared ref in the template.
+function countFor(connId: string, label: string): number {
+  return sharedCategoryCounts.value.get(connId)?.get(label) ?? 0
+}
+
 async function loadTree() {
   try {
     const conns = await invoke<ConnectionInfo[]>('list_connections')
+    const activeIds = new Set(conns.map(c => c.id))
     const newTree: TreeConnection[] = []
     for (const conn of conns) {
       const existing = connections.value.find(c => c.info.id === conn.id)
-      // Use shared realtime category counts from DataTable (no backend call needed)
       newTree.push({
         info: conn,
         expanded: existing?.expanded ?? true,
-        categoryCounts: sharedCategoryCounts.value,
       })
     }
     connections.value = newTree
+
+    // GC stale entries for connections that no longer exist
+    const staleCounts = [...sharedCategoryCounts.value.keys()].filter(k => !activeIds.has(k))
+    if (staleCounts.length > 0) {
+      const next = new Map(sharedCategoryCounts.value)
+      for (const id of staleCounts) next.delete(id)
+      sharedCategoryCounts.value = next
+    }
+    const staleFlash = [...changedCategories.value.keys()].filter(k => !activeIds.has(k))
+    if (staleFlash.length > 0) {
+      const next = new Map(changedCategories.value)
+      for (const id of staleFlash) next.delete(id)
+      changedCategories.value = next
+    }
   } catch (_e) {
     // Ignore errors on load
   }
@@ -154,13 +175,13 @@ function stateClass(state: string): string {
           :key="cat.key"
           :class="['tree-node', 'tree-child', {
             selected: selectedNodeId === `${conn.info.id}:${cat.key}`,
-            'cat-flash': flashingCategories.has(cat.label),
+            'cat-flash': flashingCategories.has(flashKey(conn.info.id, cat.label)),
           }]"
           @click="selectCategory(conn, cat)"
         >
           <span class="node-label">{{ cat.label }}</span>
-          <span class="node-count" v-if="conn.categoryCounts.get(cat.label)">
-            {{ conn.categoryCounts.get(cat.label) }}
+          <span class="node-count" v-if="countFor(conn.info.id, cat.label) > 0">
+            {{ countFor(conn.info.id, cat.label) }}
           </span>
         </div>
       </div>

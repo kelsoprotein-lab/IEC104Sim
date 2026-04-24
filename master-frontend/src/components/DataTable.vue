@@ -12,21 +12,25 @@ const emit = defineEmits<{
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedCategory = inject<Ref<string | null>>('selectedCategory')!
 const dataRefreshKey = inject<Ref<number>>('dataRefreshKey')!
-const changedCategories = inject<Ref<Set<string>>>('changedCategories')!
-const categoryCounts = inject<Ref<Map<string, number>>>('categoryCounts')!
+const changedCategories = inject<Ref<Map<string, Set<string>>>>('changedCategories')!
+const categoryCounts = inject<Ref<Map<string, Map<string, number>>>>('categoryCounts')!
+
+// Composite key: same IOA can carry different ASDU types (e.g. M_ME_NC_1 and M_IT_NA_1).
+// Keying by IOA alone caused GI/CI responses to overwrite each other at shared IOAs.
+const pointKey = (p: { ioa: number; asdu_type: string }) => `${p.ioa}|${p.asdu_type}`
 
 // === Core data: plain JS Map (not reactive) + shallow ref for display array ===
-let dataMap = new Map<number, ReceivedDataPointInfo>()
+let dataMap = new Map<string, ReceivedDataPointInfo>()
 const displayPoints = shallowRef<ReceivedDataPointInfo[]>([])
 let lastSeq = 0
 let currentConnId: string | null = null
 
 // === UI state ===
-const selectedIoas = ref<Set<number>>(new Set())
+const selectedKeys = ref<Set<string>>(new Set())
 const lastClickedIndex = ref(-1)
 const searchFilter = ref('')
-const changedIoas = ref<Set<number>>(new Set())
-const changeTimers = new Map<number, number>()
+const changedKeys = ref<Set<string>>(new Set())
+const changeTimers = new Map<string, number>()
 
 // === Virtual scroll ===
 const ROW_HEIGHT = 28
@@ -41,12 +45,15 @@ function updateDisplay() {
   const arr = Array.from(dataMap.values())
   arr.sort((a, b) => a.ioa - b.ioa)
   displayPoints.value = arr
-  // Compute realtime category counts
+  if (!currentConnId) return
+  // Compute realtime category counts, scoped to the current connection
   const counts = new Map<string, number>()
   for (const p of arr) {
     counts.set(p.category, (counts.get(p.category) || 0) + 1)
   }
-  categoryCounts.value = counts
+  const next = new Map(categoryCounts.value)
+  next.set(currentConnId, counts)
+  categoryCounts.value = next
 }
 
 // === Fetch: always merge, never replace ===
@@ -61,19 +68,23 @@ async function fetchData() {
     if (resp.points.length > 0) {
       const cats = new Set<string>()
       for (const p of resp.points) {
-        const old = dataMap.get(p.ioa)
+        const k = pointKey(p)
+        const old = dataMap.get(k)
         if (!old || old.value !== p.value) {
-          markChanged(p.ioa)
+          markChanged(k)
           cats.add(p.category)
         }
-        dataMap.set(p.ioa, p)
+        dataMap.set(k, p)
       }
       updateDisplay()
-      // Notify tree about changed categories
-      if (cats.size > 0) {
-        const merged = new Set(changedCategories.value)
+      // Notify tree about changed categories for THIS connection only
+      if (cats.size > 0 && currentConnId) {
+        const existing = changedCategories.value.get(currentConnId) ?? new Set<string>()
+        const merged = new Set(existing)
         for (const c of cats) merged.add(c)
-        changedCategories.value = merged
+        const nextMap = new Map(changedCategories.value)
+        nextMap.set(currentConnId, merged)
+        changedCategories.value = nextMap
       }
     }
     lastSeq = resp.seq
@@ -82,13 +93,13 @@ async function fetchData() {
   }
 }
 
-function markChanged(ioa: number) {
-  changedIoas.value.add(ioa)
-  const prev = changeTimers.get(ioa)
+function markChanged(key: string) {
+  changedKeys.value.add(key)
+  const prev = changeTimers.get(key)
   if (prev) clearTimeout(prev)
-  changeTimers.set(ioa, window.setTimeout(() => {
-    changedIoas.value.delete(ioa)
-    changeTimers.delete(ioa)
+  changeTimers.set(key, window.setTimeout(() => {
+    changedKeys.value.delete(key)
+    changeTimers.delete(key)
   }, 3000))
 }
 
@@ -108,10 +119,10 @@ function initConnection(connId: string) {
   dataMap = new Map()
   displayPoints.value = []
   lastSeq = 0
-  changedIoas.value.clear()
+  changedKeys.value.clear()
   for (const t of changeTimers.values()) clearTimeout(t)
   changeTimers.clear()
-  selectedIoas.value.clear()
+  selectedKeys.value.clear()
   emit('point-select', [])
   currentConnId = connId
   fetchData().then(startPoll)
@@ -181,24 +192,25 @@ function handleRowClick(localIdx: number, event: MouseEvent) {
   const globalIdx = visibleStart.value + localIdx
   const point = filteredPoints.value[globalIdx]
   if (!point) return
+  const k = pointKey(point)
   if (event.ctrlKey || event.metaKey) {
-    const s = new Set(selectedIoas.value)
-    s.has(point.ioa) ? s.delete(point.ioa) : s.add(point.ioa)
-    selectedIoas.value = s
+    const s = new Set(selectedKeys.value)
+    s.has(k) ? s.delete(k) : s.add(k)
+    selectedKeys.value = s
   } else if (event.shiftKey && lastClickedIndex.value >= 0) {
-    const s = new Set(selectedIoas.value)
+    const s = new Set(selectedKeys.value)
     const a = Math.min(lastClickedIndex.value, globalIdx)
     const b = Math.max(lastClickedIndex.value, globalIdx)
     for (let i = a; i <= b; i++) {
       const p = filteredPoints.value[i]
-      if (p) s.add(p.ioa)
+      if (p) s.add(pointKey(p))
     }
-    selectedIoas.value = s
+    selectedKeys.value = s
   } else {
-    selectedIoas.value = new Set([point.ioa])
+    selectedKeys.value = new Set([k])
   }
   lastClickedIndex.value = globalIdx
-  const selected = Array.from(selectedIoas.value).map(ioa => dataMap.get(ioa)!).filter(Boolean)
+  const selected = Array.from(selectedKeys.value).map(key => dataMap.get(key)!).filter(Boolean)
   emit('point-select', selected)
 }
 
@@ -324,14 +336,14 @@ function isCtxActiveOption(optValue: string): boolean {
             <tbody>
               <tr
                 v-for="(point, i) in visibleRows"
-                :key="point.ioa"
-                :class="{ selected: selectedIoas.has(point.ioa), 'value-changed': changedIoas.has(point.ioa) }"
+                :key="pointKey(point)"
+                :class="{ selected: selectedKeys.has(pointKey(point)), 'value-changed': changedKeys.has(pointKey(point)) }"
                 @click="handleRowClick(i, $event)"
                 @contextmenu="handleRowContextMenu(i, $event)"
               >
                 <td class="col-ioa">{{ point.ioa }}</td>
                 <td class="col-type">{{ point.asdu_type }}</td>
-                <td :class="['col-value', { 'value-highlight': changedIoas.has(point.ioa) }]">{{ point.value }}</td>
+                <td :class="['col-value', { 'value-highlight': changedKeys.has(pointKey(point)) }]">{{ point.value }}</td>
                 <td :class="['col-quality', point.quality_iv ? 'quality-iv' : 'quality-ok']">{{ point.quality_iv ? 'IV' : 'OK' }}</td>
                 <td class="col-timestamp">{{ point.timestamp ?? '-' }}</td>
               </tr>
