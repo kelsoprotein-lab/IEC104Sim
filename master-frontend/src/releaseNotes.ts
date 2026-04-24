@@ -4,6 +4,7 @@ export const RELEASES_URL = 'https://github.com/kelsoprotein-lab/IEC104Sim/relea
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '修复: 共用同一 IOA 的浮点与累计量互相覆盖,导致总召唤/累计量召唤后历史值消失',
-  '修复: 多连接场景下,一个连接的召唤数据会串扰到其他(已断开)连接的树节点',
+  '新增: 新建连接可选择 TLS 版本策略(Auto / 仅 TLS 1.2 / 仅 TLS 1.3)',
+  '新增: 新建连接表单自动持久化,下次打开自动回填上次的 TLS 路径与目标地址',
+  '改进: 窗口标题精简为 IEC104Master;移除源码中写死的本机绝对路径',
 ]

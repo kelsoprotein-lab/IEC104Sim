@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref, type Ref } from 'vue'
+import { inject, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
@@ -14,19 +14,43 @@ const refreshData = inject<() => void>('refreshData')!
 // About dialog
 const showAbout = ref(false)
 
-// New Connection modal
-const showNewConn = ref(false)
-const newConnForm = ref({
+// New Connection modal — persist the user's last-used form values so that
+// TLS paths, target address, etc. survive across app restarts.
+const NEW_CONN_FORM_KEY = 'iec104master.newConnForm.v1'
+type NewConnForm = {
+  target_address: string
+  port: number
+  common_address: number
+  use_tls: boolean
+  ca_file: string
+  cert_file: string
+  key_file: string
+  accept_invalid_certs: boolean
+  tls_version: 'auto' | 'tls12_only' | 'tls13_only'
+}
+const defaultForm = (): NewConnForm => ({
   target_address: '127.0.0.1',
   port: 2404,
   common_address: 1,
   use_tls: false,
-  ca_file: 'certs/ca.pem',
-  cert_file: 'certs/client.pem',
-  key_file: 'certs/client-key.pem',
+  ca_file: '',
+  cert_file: '',
+  key_file: '',
   accept_invalid_certs: false,
-  tls_version: 'auto' as 'auto' | 'tls12_only' | 'tls13_only',
+  tls_version: 'auto',
 })
+function loadForm(): NewConnForm {
+  try {
+    const raw = localStorage.getItem(NEW_CONN_FORM_KEY)
+    if (raw) return { ...defaultForm(), ...JSON.parse(raw) }
+  } catch {}
+  return defaultForm()
+}
+const showNewConn = ref(false)
+const newConnForm = ref<NewConnForm>(loadForm())
+watch(newConnForm, (v) => {
+  try { localStorage.setItem(NEW_CONN_FORM_KEY, JSON.stringify(v)) } catch {}
+}, { deep: true })
 
 async function createConnection() {
   try {
