@@ -70,8 +70,9 @@ match self.config.tls.version {
 
 ### 平台行为说明
 
-- **OpenSSL 后端(Linux/Windows)**: `native-tls` 直接映射到 `SslVersion::{TLS1_2, TLS1_3}`,行为精确。
-- **macOS Security Framework 后端**: `native-tls` 0.2.18 有一处 quirk — 若 `max=Tlsv13` 但 `min ≠ Tlsv13`,`max` 会被默默降级为 TLS 1.2 (参见 `security_framework.rs` 约 line 379-381 的注释)。本设计 `Tls13Only` 强制 `min=max=Tlsv13`,正好绕过该 quirk;`Auto` 不设 `max`,不触发 quirk;`Tls12Only` 不涉及 1.3,不触发。三种组合均行为正确。
+- **OpenSSL 后端(Linux)**: `native-tls` 直接映射到 `SslVersion::{TLS1_2, TLS1_3}`,三种 policy 行为精确,集成测试全部通过。
+- **SChannel 后端(Windows 10 1903+)**: TLS 1.3 原生支持,行为与 Linux 一致。
+- **macOS Security Framework 后端**: `native-tls` 0.2.18 客户端 TLS 1.3 实现不可靠 — 自签场景下 `Tls13Only` 握手会返回 SSL alert `illegal_parameter`,无论是否 `accept_invalid_certs`。原因: SecureTransport 的 TLS 1.3 客户端支持已被 Apple 弱化,推荐迁移到 Network.framework(native-tls 未使用)。`Auto` 和 `Tls12Only` 在 macOS 上均正常工作;`Tls13Only` 在生产环境对接真实服务器时效果取决于对端实现。集成测试 `master_tls13_only_handshakes_with_tls13_server` 在 Apple 平台上标记为 `#[ignore]`,但配置写入路径 (`builder.min/max_protocol_version`) 仍是正确的 — 一旦底层库/平台修复,功能即刻可用,无需代码改动。
 
 ## 5. UI(master-frontend)
 
