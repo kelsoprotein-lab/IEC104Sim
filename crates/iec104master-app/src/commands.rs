@@ -1,7 +1,7 @@
 use crate::state::{AppState, ConnectionInfo, IncrementalDataResponse, MasterConnectionState, ReceivedDataPointInfo};
 use iec104sim_core::log_collector::LogCollector;
 use iec104sim_core::log_entry::LogEntry;
-use iec104sim_core::master::{ControlResult, ControlStep, MasterConfig, MasterConnection, TlsConfig};
+use iec104sim_core::master::{ControlResult, ControlStep, MasterConfig, MasterConnection, TlsConfig, TlsVersionPolicy};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -34,6 +34,8 @@ pub struct CreateConnectionRequest {
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
     pub accept_invalid_certs: Option<bool>,
+    /// TLS version policy: "auto" | "tls12_only" | "tls13_only" (default: "auto")
+    pub tls_version: Option<String>,
 }
 
 #[tauri::command]
@@ -62,6 +64,11 @@ pub async fn create_connection(
             pkcs12_file: String::new(),
             pkcs12_password: String::new(),
             accept_invalid_certs: request.accept_invalid_certs.unwrap_or(false),
+            version: match request.tls_version.as_deref() {
+                Some("tls12_only") => TlsVersionPolicy::Tls12Only,
+                Some("tls13_only") => TlsVersionPolicy::Tls13Only,
+                _ => TlsVersionPolicy::Auto,
+            },
         },
     };
 
