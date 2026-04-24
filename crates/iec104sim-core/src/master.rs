@@ -35,6 +35,19 @@ pub struct ControlStep {
 // TLS Configuration
 // ---------------------------------------------------------------------------
 
+/// Strategy for choosing the TLS protocol version on the client side.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsVersionPolicy {
+    /// Negotiate automatically (min = TLS 1.2, no max cap).
+    #[default]
+    Auto,
+    /// Pin to TLS 1.2 (min = max = TLS 1.2).
+    Tls12Only,
+    /// Pin to TLS 1.3 (min = max = TLS 1.3).
+    Tls13Only,
+}
+
 /// TLS configuration for a master connection.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TlsConfig {
@@ -58,6 +71,9 @@ pub struct TlsConfig {
     /// Accept invalid/self-signed certificates (for testing)
     #[serde(default)]
     pub accept_invalid_certs: bool,
+    /// TLS version policy. Defaults to `Auto` (min=1.2, no max cap).
+    #[serde(default)]
+    pub version: TlsVersionPolicy,
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,6 +1298,36 @@ mod tests {
         assert!(tls.cert_file.is_empty());
         assert!(tls.key_file.is_empty());
         assert!(!tls.accept_invalid_certs);
+    }
+
+    #[test]
+    fn test_tls_version_policy_default_is_auto() {
+        let v = TlsVersionPolicy::default();
+        assert_eq!(v, TlsVersionPolicy::Auto);
+    }
+
+    #[test]
+    fn test_tls_config_default_version_is_auto() {
+        let cfg = TlsConfig::default();
+        assert_eq!(cfg.version, TlsVersionPolicy::Auto);
+    }
+
+    #[test]
+    fn test_tls_version_policy_serde_snake_case() {
+        let auto = serde_json::to_string(&TlsVersionPolicy::Auto).unwrap();
+        let v12  = serde_json::to_string(&TlsVersionPolicy::Tls12Only).unwrap();
+        let v13  = serde_json::to_string(&TlsVersionPolicy::Tls13Only).unwrap();
+        assert_eq!(auto, "\"auto\"");
+        assert_eq!(v12, "\"tls12_only\"");
+        assert_eq!(v13, "\"tls13_only\"");
+    }
+
+    #[test]
+    fn test_tls_config_deserialize_without_version_field_defaults_to_auto() {
+        let json = r#"{"enabled": true}"#;
+        let cfg: TlsConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.version, TlsVersionPolicy::Auto);
+        assert!(cfg.enabled);
     }
 
     #[test]
