@@ -32,3 +32,7 @@ crates/iec104sim-core/tests/pcap/
 
 # Local generated TLS certs (contain private keys)
 /certs/
+
+# Local generated TLS certs in app crate work dirs (contain private keys)
+crates/*/*.pem
+crates/*/*.p12

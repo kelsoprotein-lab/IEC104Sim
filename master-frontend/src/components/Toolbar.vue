@@ -33,16 +33,23 @@ const defaultForm = (): NewConnForm => ({
   port: 2404,
   common_address: 1,
   use_tls: false,
-  ca_file: '',
-  cert_file: '',
-  key_file: '',
+  ca_file: './ca.pem',
+  cert_file: './client.pem',
+  key_file: './client-key.pem',
   accept_invalid_certs: false,
   tls_version: 'auto',
 })
 function loadForm(): NewConnForm {
   try {
     const raw = localStorage.getItem(NEW_CONN_FORM_KEY)
-    if (raw) return { ...defaultForm(), ...JSON.parse(raw) }
+    if (raw) {
+      const merged = { ...defaultForm(), ...JSON.parse(raw) }
+      const def = defaultForm()
+      if (!merged.ca_file) merged.ca_file = def.ca_file
+      if (!merged.cert_file) merged.cert_file = def.cert_file
+      if (!merged.key_file) merged.key_file = def.key_file
+      return merged
+    }
   } catch {}
   return defaultForm()
 }
@@ -80,6 +87,19 @@ async function connectMaster() {
     await invoke('connect_master', { id: selectedConnectionId.value })
     selectedConnectionState.value = 'Connected'
     refreshTree()
+    try {
+      const conns = await invoke<any[]>('list_connections')
+      const conn = conns.find((c: any) => c.id === selectedConnectionId.value)
+      const ca = conn?.common_address ?? 1
+      await invoke('send_interrogation', {
+        id: selectedConnectionId.value,
+        commonAddress: ca,
+      })
+      refreshData()
+      setTimeout(() => refreshTree(), 3000)
+    } catch (e) {
+      console.warn('Auto GI after connect failed:', e)
+    }
   } catch (e) {
     await showAlert(String(e))
   }
