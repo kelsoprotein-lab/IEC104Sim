@@ -248,6 +248,34 @@ pub struct ControlCommandRequest {
     pub command_type: String,
     pub value: String,
     pub select: Option<bool>,
+    /// QU (single/double/step, occupies bits 2..6 of the command byte) or QL (setpoint, bits 0..6 of QOS).
+    /// Bitstring(51) ignores this field.
+    pub qualifier: Option<u8>,
+    /// Cause Of Transmission. Defaults to 6 (Activation).
+    pub cot: Option<u8>,
+    /// 32-bit payload for C_BO_NA_1 (51). Required when command_type == "bitstring".
+    pub bitstring: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RawApduRequest {
+    pub connection_id: String,
+    pub hex_payload: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RawSendResult {
+    pub sent_hex: String,
+    pub byte_len: usize,
+    pub timestamp: String,
+}
+
+fn default_qualifier(command_type: &str) -> u8 {
+    // 0 means "no additional definition" for QU, and "default" for QL.
+    let _ = command_type;
+    0
 }
 
 #[tauri::command]
@@ -255,7 +283,9 @@ pub async fn send_control_command(
     state: State<'_, AppState>,
     request: ControlCommandRequest,
 ) -> Result<ControlResult, String> {
+    let t0 = std::time::Instant::now();
     let connections = state.connections.read().await;
+    let t_lock = t0.elapsed();
     let conn = connections
         .get(&request.connection_id)
         .ok_or_else(|| format!("connection {} not found", request.connection_id))?;
@@ -263,6 +293,13 @@ pub async fn send_control_command(
     let select = request.select.unwrap_or(false);
     let ca = request.common_address;
     let ioa = request.ioa;
+    let qu = request.qualifier.unwrap_or_else(|| default_qualifier(&request.command_type));
+    let cot = request.cot.unwrap_or(6);
+
+    eprintln!(
+        "[send_control_command] enter type={} ioa={} ca={} select={} | connections_read_lock={}ms",
+        request.command_type, ioa, ca, select, t_lock.as_millis()
+    );
 
     // Direct execute: send command and return immediately
     if !select {
@@ -270,32 +307,41 @@ pub async fn send_control_command(
         match request.command_type.as_str() {
             "single" => {
                 let value = parse_bool(&request.value)?;
-                conn.connection.send_single_command(ioa, value, false, ca).await
+                conn.connection.send_single_command(ioa, value, false, ca, qu, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             "double" => {
                 let value = request.value.parse::<u8>().map_err(|e| format!("{}", e))?;
-                conn.connection.send_double_command(ioa, value, false, ca).await
+                conn.connection.send_double_command(ioa, value, false, ca, qu, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             "step" => {
                 let value = request.value.parse::<u8>().map_err(|e| format!("{}", e))?;
-                conn.connection.send_step_command(ioa, value, false, ca).await
+                conn.connection.send_step_command(ioa, value, false, ca, qu, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             "setpoint_normalized" => {
                 let value = request.value.parse::<f32>().map_err(|e| format!("{}", e))?;
-                conn.connection.send_setpoint_normalized(ioa, value, false, ca).await
+                conn.connection.send_setpoint_normalized(ioa, value, false, ca, qu, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             "setpoint_scaled" => {
                 let value = request.value.parse::<i16>().map_err(|e| format!("{}", e))?;
-                conn.connection.send_setpoint_scaled(ioa, value, false, ca).await
+                conn.connection.send_setpoint_scaled(ioa, value, false, ca, qu, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             "setpoint_float" => {
                 let value = request.value.parse::<f32>().map_err(|e| format!("{}", e))?;
-                conn.connection.send_setpoint_float(ioa, value, false, ca).await
+                let t_send = std::time::Instant::now();
+                conn.connection.send_setpoint_float(ioa, value, false, ca, qu, cot).await
+                    .map_err(|e| format!("failed to send command: {}", e))?;
+                eprintln!("[send_control_command] setpoint_float send_frame={}ms", t_send.elapsed().as_millis());
+            }
+            "bitstring" => {
+                let value = request.bitstring
+                    .or_else(|| parse_u32_value(&request.value))
+                    .ok_or_else(|| "bitstring 命令需要提供 32 位数值 (bitstring 字段或 value)".to_string())?;
+                conn.connection.send_bitstring_command(ioa, value, ca, cot).await
                     .map_err(|e| format!("failed to send command: {}", e))?;
             }
             _ => return Err(format!("unknown command type: {}", request.command_type)),
@@ -309,73 +355,183 @@ pub async fn send_control_command(
         });
     }
 
-    // SbO mode: delegate to send_control_with_sbo
-    // Build select and execute frames via the command-specific logic
-    use iec104sim_core::log_entry::FrameLabel;
+    // SbO mode: delegate to send_control_with_sbo_event
+    use iec104sim_core::log_entry::{DetailEvent, FrameLabel};
 
     match request.command_type.as_str() {
         "single" => {
             let value = parse_bool(&request.value)?;
-            let select_frame = build_control_frames_single(ca, ioa, value, true);
-            let execute_frame = build_control_frames_single(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_single(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_single(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "single_command".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "qu": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("单点命令 IOA={} val={}", ioa, value),
-                FrameLabel::SingleCommand, ca,
+                &format!("单点命令 IOA={} val={} QU={} COT={}", ioa, value, qu, cot),
+                FrameLabel::SingleCommand, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
         }
         "double" => {
             let value = request.value.parse::<u8>().map_err(|e| format!("{}", e))?;
-            let select_frame = build_control_frames_double(ca, ioa, value, true);
-            let execute_frame = build_control_frames_double(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_double(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_double(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "double_command".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "qu": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("双点命令 IOA={} val={}", ioa, value),
-                FrameLabel::DoubleCommand, ca,
+                &format!("双点命令 IOA={} val={} QU={} COT={}", ioa, value, qu, cot),
+                FrameLabel::DoubleCommand, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
         }
         "step" => {
             let value = request.value.parse::<u8>().map_err(|e| format!("{}", e))?;
-            let select_frame = build_control_frames_step(ca, ioa, value, true);
-            let execute_frame = build_control_frames_step(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_step(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_step(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "step_command".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "qu": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("步调节命令 IOA={} val={}", ioa, value),
-                FrameLabel::StepCommand, ca,
+                &format!("步调节命令 IOA={} val={} QU={} COT={}", ioa, value, qu, cot),
+                FrameLabel::StepCommand, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
         }
         "setpoint_normalized" => {
             let value = request.value.parse::<f32>().map_err(|e| format!("{}", e))?;
-            let select_frame = build_control_frames_setpoint_norm(ca, ioa, value, true);
-            let execute_frame = build_control_frames_setpoint_norm(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_setpoint_norm(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_setpoint_norm(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "setpoint_normalized".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "ql": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("归一化设定值 IOA={} val={:.4}", ioa, value),
-                FrameLabel::SetpointNormalized, ca,
+                &format!("归一化设定值 IOA={} val={:.4} QL={} COT={}", ioa, value, qu, cot),
+                FrameLabel::SetpointNormalized, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
         }
         "setpoint_scaled" => {
             let value = request.value.parse::<i16>().map_err(|e| format!("{}", e))?;
-            let select_frame = build_control_frames_setpoint_scaled(ca, ioa, value, true);
-            let execute_frame = build_control_frames_setpoint_scaled(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_setpoint_scaled(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_setpoint_scaled(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "setpoint_scaled".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "ql": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("标度化设定值 IOA={} val={}", ioa, value),
-                FrameLabel::SetpointScaled, ca,
+                &format!("标度化设定值 IOA={} val={} QL={} COT={}", ioa, value, qu, cot),
+                FrameLabel::SetpointScaled, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
         }
         "setpoint_float" => {
             let value = request.value.parse::<f32>().map_err(|e| format!("{}", e))?;
-            let select_frame = build_control_frames_setpoint_float(ca, ioa, value, true);
-            let execute_frame = build_control_frames_setpoint_float(ca, ioa, value, false);
-            conn.connection.send_control_with_sbo(
+            let select_frame = build_control_frames_setpoint_float(ca, ioa, value, true, qu, cot);
+            let execute_frame = build_control_frames_setpoint_float(ca, ioa, value, false, qu, cot);
+            let event = DetailEvent {
+                kind: "setpoint_float".to_string(),
+                payload: serde_json::json!({ "ioa": ioa, "val": value, "ql": qu, "cot": cot }),
+            };
+            conn.connection.send_control_with_sbo_event(
                 select_frame, execute_frame, ioa,
-                &format!("浮点设定值 IOA={} val={:.3}", ioa, value),
-                FrameLabel::SetpointFloat, ca,
+                &format!("浮点设定值 IOA={} val={:.3} QL={} COT={}", ioa, value, qu, cot),
+                FrameLabel::SetpointFloat, ca, Some(event),
             ).await.map_err(|e| format!("{}", e))
+        }
+        "bitstring" => {
+            // C_BO_NA_1 has no SbO bit; treat select-mode requests as direct execute with a clear error.
+            Err("位串命令 (C_BO_NA_1) 不支持 选择-执行 模式,请关闭 SbO 后再发送".to_string())
         }
         _ => Err(format!("unknown command type: {}", request.command_type)),
     }
+}
+
+fn parse_u32_value(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(rest, 16).ok()
+    } else {
+        s.parse::<u32>().ok()
+    }
+}
+
+#[tauri::command]
+pub async fn send_raw_apdu(
+    state: State<'_, AppState>,
+    request: RawApduRequest,
+) -> Result<RawSendResult, String> {
+    let connections = state.connections.read().await;
+    let conn = connections
+        .get(&request.connection_id)
+        .ok_or_else(|| format!("connection {} not found", request.connection_id))?;
+
+    let bytes = parse_hex_payload(&request.hex_payload)?;
+    if bytes.len() < 6 {
+        return Err(format!(
+            "APDU 长度过短 ({} 字节),至少需要 6 字节(STARTBYTE+LEN+4 字节控制域)",
+            bytes.len()
+        ));
+    }
+    if bytes[0] != 0x68 {
+        return Err(format!(
+            "APDU 起始字节应为 0x68,实际为 0x{:02X}",
+            bytes[0]
+        ));
+    }
+    let declared_len = bytes[1] as usize;
+    let expected_total = declared_len + 2;
+    if expected_total != bytes.len() {
+        return Err(format!(
+            "APDU 长度字段不匹配: LEN={} (期望总长 {}),实际总长 {}",
+            declared_len, expected_total, bytes.len()
+        ));
+    }
+
+    conn.connection
+        .send_raw_apdu(bytes.clone())
+        .await
+        .map_err(|e| format!("发送失败: {}", e))?;
+
+    Ok(RawSendResult {
+        sent_hex: bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" "),
+        byte_len: bytes.len(),
+        timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+    })
+}
+
+fn parse_hex_payload(s: &str) -> Result<Vec<u8>, String> {
+    let mut compact = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_hexdigit() {
+            compact.push(c);
+        } else if c.is_whitespace() || c == ',' || c == '-' || c == ':' {
+            continue;
+        } else {
+            return Err(format!("十六进制串包含非法字符 '{}'", c));
+        }
+    }
+    if compact.is_empty() {
+        return Err("十六进制串为空".to_string());
+    }
+    if compact.len() % 2 != 0 {
+        return Err(format!("十六进制位数为奇数 ({} 位),需为偶数", compact.len()));
+    }
+    let mut out = Vec::with_capacity(compact.len() / 2);
+    for i in (0..compact.len()).step_by(2) {
+        let byte = u8::from_str_radix(&compact[i..i + 2], 16)
+            .map_err(|e| format!("解析字节 '{}' 失败: {}", &compact[i..i + 2], e))?;
+        out.push(byte);
+    }
+    Ok(out)
 }
 
 fn parse_bool(s: &str) -> Result<bool, String> {
@@ -387,60 +543,64 @@ fn parse_bool(s: &str) -> Result<bool, String> {
 }
 
 // Frame builders for SbO (need raw frames before SSN/RSN patching)
-fn build_control_frames_single(ca: u16, ioa: u32, value: bool, select: bool) -> Vec<u8> {
+fn build_control_frames_single(ca: u16, ioa: u32, value: bool, select: bool, qu: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
-    let mut sco = if value { 0x01 } else { 0x00 };
+    let mut sco = (qu & 0x1F) << 2;
+    if value { sco |= 0x01; }
     if select { sco |= 0x80; }
-    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 45, 0x01, 6, 0x00,
+    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 45, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2], sco]
 }
 
-fn build_control_frames_double(ca: u16, ioa: u32, value: u8, select: bool) -> Vec<u8> {
+fn build_control_frames_double(ca: u16, ioa: u32, value: u8, select: bool, qu: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
-    let mut dco = value & 0x03;
+    let mut dco = (value & 0x03) | ((qu & 0x1F) << 2);
     if select { dco |= 0x80; }
-    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 46, 0x01, 6, 0x00,
+    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 46, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2], dco]
 }
 
-fn build_control_frames_step(ca: u16, ioa: u32, value: u8, select: bool) -> Vec<u8> {
+fn build_control_frames_step(ca: u16, ioa: u32, value: u8, select: bool, qu: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
-    let mut rco = value & 0x03;
+    let mut rco = (value & 0x03) | ((qu & 0x1F) << 2);
     if select { rco |= 0x80; }
-    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 47, 0x01, 6, 0x00,
+    vec![0x68, 0x0E, 0x00, 0x00, 0x00, 0x00, 47, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2], rco]
 }
 
-fn build_control_frames_setpoint_norm(ca: u16, ioa: u32, value: f32, select: bool) -> Vec<u8> {
+fn build_control_frames_setpoint_norm(ca: u16, ioa: u32, value: f32, select: bool, ql: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
     let nva = (value * 32767.0) as i16;
     let nva_bytes = nva.to_le_bytes();
-    let qos = if select { 0x80 } else { 0x00 };
-    vec![0x68, 0x10, 0x00, 0x00, 0x00, 0x00, 48, 0x01, 6, 0x00,
+    let mut qos = ql & 0x7F;
+    if select { qos |= 0x80; }
+    vec![0x68, 0x10, 0x00, 0x00, 0x00, 0x00, 48, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2],
          nva_bytes[0], nva_bytes[1], qos]
 }
 
-fn build_control_frames_setpoint_scaled(ca: u16, ioa: u32, value: i16, select: bool) -> Vec<u8> {
+fn build_control_frames_setpoint_scaled(ca: u16, ioa: u32, value: i16, select: bool, ql: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
     let sva_bytes = value.to_le_bytes();
-    let qos = if select { 0x80 } else { 0x00 };
-    vec![0x68, 0x10, 0x00, 0x00, 0x00, 0x00, 49, 0x01, 6, 0x00,
+    let mut qos = ql & 0x7F;
+    if select { qos |= 0x80; }
+    vec![0x68, 0x10, 0x00, 0x00, 0x00, 0x00, 49, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2],
          sva_bytes[0], sva_bytes[1], qos]
 }
 
-fn build_control_frames_setpoint_float(ca: u16, ioa: u32, value: f32, select: bool) -> Vec<u8> {
+fn build_control_frames_setpoint_float(ca: u16, ioa: u32, value: f32, select: bool, ql: u8, cot: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     let ioa_bytes = ioa.to_le_bytes();
     let val_bytes = value.to_le_bytes();
-    let qos = if select { 0x80 } else { 0x00 };
-    vec![0x68, 0x12, 0x00, 0x00, 0x00, 0x00, 50, 0x01, 6, 0x00,
+    let mut qos = ql & 0x7F;
+    if select { qos |= 0x80; }
+    vec![0x68, 0x12, 0x00, 0x00, 0x00, 0x00, 50, 0x01, cot, 0x00,
          ca_bytes[0], ca_bytes[1], ioa_bytes[0], ioa_bytes[1], ioa_bytes[2],
          val_bytes[0], val_bytes[1], val_bytes[2], val_bytes[3], qos]
 }
