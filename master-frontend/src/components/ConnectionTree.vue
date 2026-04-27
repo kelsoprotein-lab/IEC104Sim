@@ -2,6 +2,9 @@
 import { ref, inject, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectionInfo } from '../types'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'connection-select', id: string, state: string): void
@@ -147,10 +150,10 @@ function stateClass(state: string): string {
 
 <template>
   <div class="tree-container" @click="hideContextMenu">
-    <div class="tree-header">连接列表</div>
+    <div class="tree-header">{{ t('tree.title') }}</div>
 
     <div v-if="connections.length === 0" class="tree-empty">
-      暂无连接
+      {{ t('tree.noConnections') }}
     </div>
 
     <div v-for="conn in connections" :key="conn.info.id" class="tree-node-group">
@@ -179,7 +182,7 @@ function stateClass(state: string): string {
           }]"
           @click="selectCategory(conn, cat)"
         >
-          <span class="node-label">{{ cat.label }}</span>
+          <span class="node-label">{{ t(`category.${cat.key}`) }}</span>
           <span class="node-count" v-if="countFor(conn.info.id, cat.label) > 0">
             {{ countFor(conn.info.id, cat.label) }}
           </span>
@@ -189,7 +192,7 @@ function stateClass(state: string): string {
 
     <!-- Context Menu -->
     <div v-if="contextMenu.visible" class="context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
-      <div class="ctx-item danger" @click="ctxDeleteConnection">删除连接</div>
+      <div class="ctx-item danger" @click="ctxDeleteConnection">{{ t('tree.deleteConnection') }}</div>
     </div>
   </div>
 </template>

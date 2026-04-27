@@ -43,14 +43,14 @@ export type DictShape = {
     deleteConnection: string
   }
   category: {
-    singlePoint: string
-    doublePoint: string
-    stepPosition: string
+    single_point: string
+    double_point: string
+    step_position: string
     bitstring: string
-    normalizedMeasured: string
-    scaledMeasured: string
-    floatMeasured: string
-    integratedTotals: string
+    normalized_measured: string
+    scaled_measured: string
+    float_measured: string
+    integrated_totals: string
   }
   table: {
     allData: string
@@ -213,14 +213,14 @@ const dict: DictShape = {
     deleteConnection: '删除连接',
   },
   category: {
-    singlePoint: '单点 (SP)',
-    doublePoint: '双点 (DP)',
-    stepPosition: '步位置 (ST)',
+    single_point: '单点 (SP)',
+    double_point: '双点 (DP)',
+    step_position: '步位置 (ST)',
     bitstring: '位串 (BO)',
-    normalizedMeasured: '归一化 (ME_NA)',
-    scaledMeasured: '标度化 (ME_NB)',
-    floatMeasured: '浮点 (ME_NC)',
-    integratedTotals: '累计量 (IT)',
+    normalized_measured: '归一化 (ME_NA)',
+    scaled_measured: '标度化 (ME_NB)',
+    float_measured: '浮点 (ME_NC)',
+    integrated_totals: '累计量 (IT)',
   },
   table: {
     allData: '全部数据',
