@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { ServerInfo, StationInfo } from '../types'
+import { useI18n, localizeCategoryLabel } from '../i18n'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 const CATEGORIES = [
@@ -196,8 +198,8 @@ function isCategorySelected(ts: TreeServer, tst: TreeStation, category: string):
 
 <template>
   <div class="connection-tree" @click="closeContextMenu">
-    <div class="tree-header">服务器</div>
-    <div v-if="treeData.length === 0" class="tree-empty">暂无服务器</div>
+    <div class="tree-header">{{ t('tree.title') }}</div>
+    <div v-if="treeData.length === 0" class="tree-empty">{{ t('tree.noServers') }}</div>
 
     <div v-for="ts in treeData" :key="ts.server.id" class="tree-node-group">
       <!-- Server Node -->
@@ -232,7 +234,7 @@ function isCategorySelected(ts: TreeServer, tst: TreeStation, category: string):
               :class="['tree-node category-node', { selected: isCategorySelected(ts, tst, cat) }]"
               @click.stop="selectCategory(ts, tst, cat)"
             >
-              <span class="node-label">{{ cat }}</span>
+              <span class="node-label">{{ localizeCategoryLabel(cat) }}</span>
               <span class="node-badge" v-if="sharedCategoryCounts.get(cat)">
                 {{ sharedCategoryCounts.get(cat) }}
               </span>
@@ -254,16 +256,16 @@ function isCategorySelected(ts: TreeServer, tst: TreeStation, category: string):
           v-if="contextMenu.serverState !== 'Running'"
           class="context-menu-item"
           @click="ctxStartServer"
-        >启动服务器</div>
+        >{{ t('tree.ctxStartServer') }}</div>
         <div
           v-else
           class="context-menu-item"
           @click="ctxStopServer"
-        >停止服务器</div>
-        <div class="context-menu-item danger" @click="ctxDeleteServer">删除服务器</div>
+        >{{ t('tree.ctxStopServer') }}</div>
+        <div class="context-menu-item danger" @click="ctxDeleteServer">{{ t('tree.ctxDeleteServer') }}</div>
       </template>
       <template v-if="contextMenu.type === 'station'">
-        <div class="context-menu-item danger" @click="ctxDeleteStation">删除站</div>
+        <div class="context-menu-item danger" @click="ctxDeleteStation">{{ t('tree.ctxDeleteStation') }}</div>
       </template>
     </div>
   </div>

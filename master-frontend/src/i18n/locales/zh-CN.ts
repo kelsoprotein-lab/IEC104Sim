@@ -161,6 +161,9 @@ export type DictShape = {
   appDialog: {
     cancel: string
     ok: string
+    titleAlert: string
+    titleConfirm: string
+    titlePrompt: string
   }
   errors: {
     connectFailed: string
@@ -331,6 +334,9 @@ const dict: DictShape = {
   appDialog: {
     cancel: '取消',
     ok: '确定',
+    titleAlert: '提示',
+    titleConfirm: '确认',
+    titlePrompt: '输入',
   },
   errors: {
     connectFailed: '连接失败: {err}\n将每 {sec} 秒自动重试,点击「断开」可停止。',

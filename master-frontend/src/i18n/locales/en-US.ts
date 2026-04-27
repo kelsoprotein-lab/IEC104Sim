@@ -163,6 +163,9 @@ const dict: DictShape = {
   appDialog: {
     cancel: 'Cancel',
     ok: 'OK',
+    titleAlert: 'Notice',
+    titleConfirm: 'Confirm',
+    titlePrompt: 'Input',
   },
   errors: {
     connectFailed: 'Connect failed: {err}\nWill retry every {sec}s. Click "Disconnect" to stop.',

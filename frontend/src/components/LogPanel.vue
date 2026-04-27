@@ -2,6 +2,9 @@
 import { ref, inject, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry } from '../types'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 interface Props {
   expanded: boolean
@@ -47,22 +50,39 @@ async function clearLogs() {
   }
 }
 
-async function exportLogs() {
-  if (!selectedServerId.value) return
-  try {
-    const csv = await invoke<string>('export_logs_csv', {
-      serverId: selectedServerId.value,
-    })
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `iec104_log_${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    error.value = String(e)
+function formatDetail(log: LogEntry): string {
+  if (log.detail_event && log.detail_event.kind) {
+    return t(`log.${log.detail_event.kind}`, log.detail_event.payload)
   }
+  return log.detail
+}
+
+function csvEscape(s: string): string {
+  return s.replace(/"/g, '""')
+}
+
+function exportLogs() {
+  if (!selectedServerId.value || logs.value.length === 0) return
+  const lines: string[] = []
+  lines.push([
+    t('log.timeCol'), t('log.directionCol'), t('log.frameCol'), t('log.detailCol'),
+  ].map(h => `"${csvEscape(h)}"`).join(','))
+  for (const log of logs.value) {
+    lines.push([
+      `"${csvEscape(formatTimestamp(log.timestamp))}"`,
+      `"${csvEscape(log.direction)}"`,
+      `"${csvEscape(formatFrameLabel(log.frame_label))}"`,
+      `"${csvEscape(formatDetail(log))}"`,
+    ].join(','))
+  }
+  const csv = '﻿' + lines.join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `iec104_log_${Date.now()}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function formatTimestamp(ts: string): string {
@@ -134,25 +154,25 @@ onUnmounted(() => stopAutoRefresh())
   <div :class="['log-panel', { expanded }]">
     <div class="log-header" @click="toggleExpanded">
       <span class="log-toggle">{{ expanded ? '\u25BC' : '\u25B2' }}</span>
-      <span class="log-title">通信日志</span>
+      <span class="log-title">{{ t('log.title') }}</span>
       <div class="log-controls" @click.stop>
-        <button class="log-btn" @click="loadLogs" title="刷新">刷新</button>
-        <button class="log-btn" @click="clearLogs" title="清除">清除</button>
-        <button class="log-btn" @click="exportLogs" title="导出CSV">导出CSV</button>
+        <button class="log-btn" @click="loadLogs" :title="t('log.titleRefresh')">{{ t('log.refresh') }}</button>
+        <button class="log-btn" @click="clearLogs" :title="t('log.titleClear')">{{ t('log.clear') }}</button>
+        <button class="log-btn" @click="exportLogs" :title="t('log.titleExport')">{{ t('log.export') }}</button>
       </div>
     </div>
 
     <div v-if="expanded" class="log-body">
-      <div v-if="isLoading" class="log-loading">加载中...</div>
-      <div v-else-if="!selectedServerId" class="log-empty">请先选择一个服务器</div>
-      <div v-else-if="logs.length === 0" class="log-empty">暂无日志</div>
+      <div v-if="isLoading" class="log-loading">{{ t('log.loading') }}</div>
+      <div v-else-if="!selectedServerId" class="log-empty">{{ t('log.chooseServer') }}</div>
+      <div v-else-if="logs.length === 0" class="log-empty">{{ t('log.noLogs') }}</div>
       <table v-else class="log-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>方向</th>
-            <th>帧类型</th>
-            <th>详情</th>
+            <th>{{ t('log.timeCol') }}</th>
+            <th>{{ t('log.directionCol') }}</th>
+            <th>{{ t('log.frameCol') }}</th>
+            <th>{{ t('log.detailCol') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -160,7 +180,7 @@ onUnmounted(() => stopAutoRefresh())
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', log.direction.toLowerCase()]">{{ log.direction }}</td>
             <td class="col-frame">{{ formatFrameLabel(log.frame_label) }}</td>
-            <td class="col-detail">{{ log.detail }}</td>
+            <td class="col-detail">{{ formatDetail(log) }}</td>
           </tr>
         </tbody>
       </table>

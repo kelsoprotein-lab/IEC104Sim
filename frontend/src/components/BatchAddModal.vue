@@ -3,7 +3,9 @@ import { ref, computed, watch, inject } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from '../i18n'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface Props {
@@ -18,16 +20,16 @@ const emit = defineEmits<{
   added: []
 }>()
 
-const ASDU_TYPES = [
-  { value: 'MSpNa1', label: 'M_SP_NA_1 - 单点信息' },
-  { value: 'MDpNa1', label: 'M_DP_NA_1 - 双点信息' },
-  { value: 'MStNa1', label: 'M_ST_NA_1 - 步位置信息' },
-  { value: 'MBoNa1', label: 'M_BO_NA_1 - 位串' },
-  { value: 'MMeNa1', label: 'M_ME_NA_1 - 归一化测量值' },
-  { value: 'MMeNb1', label: 'M_ME_NB_1 - 标度化测量值' },
-  { value: 'MMeNc1', label: 'M_ME_NC_1 - 浮点测量值' },
-  { value: 'MItNa1', label: 'M_IT_NA_1 - 累计量' },
-]
+const ASDU_TYPES = computed(() => [
+  { value: 'MSpNa1', label: t('asduType.sp') },
+  { value: 'MDpNa1', label: t('asduType.dp') },
+  { value: 'MStNa1', label: t('asduType.st') },
+  { value: 'MBoNa1', label: t('asduType.bo') },
+  { value: 'MMeNa1', label: t('asduType.me_na') },
+  { value: 'MMeNb1', label: t('asduType.me_nb') },
+  { value: 'MMeNc1', label: t('asduType.me_nc') },
+  { value: 'MItNa1', label: t('asduType.it') },
+])
 
 const startIoa = ref(0)
 const count = ref(10)
@@ -68,7 +70,7 @@ async function handleConfirm() {
     })
     emit('added')
   } catch (e) {
-    await showAlert(`批量添加失败：${e}`)
+    await showAlert(t('batchModal.failedPrefix', { err: String(e) }))
   } finally {
     isSaving.value = false
   }
@@ -86,14 +88,14 @@ function handleBackdropClick(e: MouseEvent) {
     <div v-if="visible" class="modal-backdrop" @click="handleBackdropClick">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">批量添加数据点</span>
+          <span class="modal-title">{{ t('batchModal.title') }}</span>
           <button class="btn-close" @click="$emit('close')">×</button>
         </div>
 
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group half">
-              <label class="form-label">起始 IOA</label>
+              <label class="form-label">{{ t('batchModal.startIoa') }}</label>
               <input
                 v-model.number="startIoa"
                 type="number"
@@ -102,7 +104,7 @@ function handleBackdropClick(e: MouseEvent) {
               />
             </div>
             <div class="form-group half">
-              <label class="form-label">数量</label>
+              <label class="form-label">{{ t('batchModal.count') }}</label>
               <input
                 v-model.number="count"
                 type="number"
@@ -114,36 +116,36 @@ function handleBackdropClick(e: MouseEvent) {
           </div>
 
           <div class="form-group">
-            <label class="form-label">ASDU 类型</label>
+            <label class="form-label">{{ t('batchModal.asduTypeLabel') }}</label>
             <select v-model="formAsduType" class="form-select">
-              <option v-for="t in ASDU_TYPES" :key="t.value" :value="t.value">
-                {{ t.label }}
+              <option v-for="opt in ASDU_TYPES" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
               </option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">名称前缀（可选）</label>
+            <label class="form-label">{{ t('batchModal.namePrefix') }}</label>
             <input
               v-model="namePrefix"
               type="text"
               class="form-input"
-              placeholder="如 SP → SP_0, SP_1, ..."
+              :placeholder="t('batchModal.namePrefixPlaceholder')"
             />
           </div>
 
           <div class="count-info">
-            <span v-if="count > 100000" class="count-warn">范围过大（最多 100000）</span>
+            <span v-if="count > 100000" class="count-warn">{{ t('batchModal.countWarn') }}</span>
             <template v-else>
-              <span>IOA 范围：{{ startIoa }} ~ {{ endIoa }}，共将添加 <strong>{{ count }}</strong> 个数据点</span>
+              <span>{{ t('batchModal.rangeHint', { startIoa, endIoa, count }) }}</span>
             </template>
           </div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">取消</button>
+          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="handleConfirm" :disabled="!isValid || isSaving">
-            {{ isSaving ? '添加中...' : '确认' }}
+            {{ isSaving ? t('batchModal.saving') : t('batchModal.add') }}
           </button>
         </div>
       </div>
