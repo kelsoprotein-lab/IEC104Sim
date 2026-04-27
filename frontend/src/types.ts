@@ -29,4 +29,5 @@ export interface LogEntry {
   frame_label: { [key: string]: string } | string
   detail: string
   raw_bytes: number[] | null
+  detail_event?: { kind: string; payload: Record<string, unknown> } | null
 }

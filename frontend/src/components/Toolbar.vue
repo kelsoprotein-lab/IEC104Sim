@@ -5,7 +5,9 @@ import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showPrompt as ShowPrompt } from '../composables/useDialog'
 import AboutDialog from './AboutDialog.vue'
 import LangSwitch from './LangSwitch.vue'
+import { useI18n } from '../i18n'
 
+const { t } = useI18n()
 const showAbout = ref(false)
 
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
@@ -42,7 +44,7 @@ function openNewServerModal() {
 async function submitNewServer() {
   const port = Number(newServerPort.value)
   if (!port || port < 1 || port > 65535) {
-    await showAlert('请输入有效的端口号 (1-65535)')
+    await showAlert(t('errors.invalidPort'))
     return
   }
   showNewServerModal.value = false
@@ -91,21 +93,22 @@ async function stopServer() {
 // --- Add Station ---
 async function addStation() {
   if (!selectedServerId.value) return
-  const caStr = await showPrompt('输入公共地址 (CA)', '1')
+  const caStr = await showPrompt(t('prompt.inputCommonAddress'), '1')
   if (caStr === null) return
   const ca = Number(caStr)
   if (isNaN(ca) || ca < 1 || ca > 65534) {
-    await showAlert('请输入有效的公共地址 (1-65534)')
+    await showAlert(t('errors.invalidCa'))
     return
   }
-  const name = await showPrompt('输入站名', `站 ${ca}`)
+  const defaultName = t('station.defaultName', { ca })
+  const name = await showPrompt(t('prompt.inputStationName'), defaultName)
   if (name === null) return
   try {
     await invoke('add_station', {
       request: {
         server_id: selectedServerId.value,
         common_address: ca,
-        name: name || `站 ${ca}`,
+        name: name || '',
       },
     })
     refreshTree()
@@ -201,9 +204,9 @@ watch([selectedServerId, selectedCA], () => {
 <template>
   <div class="toolbar">
     <div class="toolbar-group">
-      <button class="toolbar-btn" @click="openNewServerModal" title="新建服务器">
+      <button class="toolbar-btn" @click="openNewServerModal" :title="t('toolbar.titleNewServer')">
         <span class="toolbar-icon">+</span>
-        <span class="toolbar-label">新建服务器</span>
+        <span class="toolbar-label">{{ t('toolbar.newServer') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
@@ -212,17 +215,17 @@ watch([selectedServerId, selectedCA], () => {
         class="toolbar-btn btn-start"
         @click="startServer"
         :disabled="!selectedServerId || selectedServerState === 'Running'"
-        title="启动服务器"
+        :title="t('toolbar.titleStartServer')"
       >
-        <span class="toolbar-label">启动</span>
+        <span class="toolbar-label">{{ t('toolbar.start') }}</span>
       </button>
       <button
         class="toolbar-btn btn-stop"
         @click="stopServer"
         :disabled="!selectedServerId || selectedServerState === 'Stopped'"
-        title="停止服务器"
+        :title="t('toolbar.titleStopServer')"
       >
-        <span class="toolbar-label">停止</span>
+        <span class="toolbar-label">{{ t('toolbar.stop') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
@@ -231,9 +234,9 @@ watch([selectedServerId, selectedCA], () => {
         class="toolbar-btn"
         @click="addStation"
         :disabled="!selectedServerId"
-        title="添加站"
+        :title="t('toolbar.titleAddStation')"
       >
-        <span class="toolbar-label">添加站</span>
+        <span class="toolbar-label">{{ t('toolbar.addStation') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
@@ -242,9 +245,9 @@ watch([selectedServerId, selectedCA], () => {
         :class="['toolbar-btn', { 'btn-mutation-active': mutationActive }]"
         @click="toggleMutation"
         :disabled="!selectedServerId || selectedCA === null"
-        title="随机变化"
+        :title="t('toolbar.titleRandomMutation')"
       >
-        <span class="toolbar-label">{{ mutationActive ? '停止变化' : '随机变化' }}</span>
+        <span class="toolbar-label">{{ mutationActive ? t('toolbar.stopMutation') : t('toolbar.randomMutation') }}</span>
       </button>
       <input
         type="number"
@@ -253,7 +256,7 @@ watch([selectedServerId, selectedCA], () => {
         max="60000"
         step="100"
         v-model.number="mutationRate"
-        title="变化间隔 (ms)"
+        :title="t('toolbar.mutationInterval')"
       />
       <span class="rate-label">ms</span>
     </div>
@@ -263,9 +266,9 @@ watch([selectedServerId, selectedCA], () => {
         :class="['toolbar-btn', { 'btn-cyclic-active': cyclicActive }]"
         @click="toggleCyclic"
         :disabled="!selectedServerId || selectedCA === null"
-        title="周期发送"
+        :title="t('toolbar.titleCyclicSend')"
       >
-        <span class="toolbar-label">{{ cyclicActive ? '停止周期' : '周期发送' }}</span>
+        <span class="toolbar-label">{{ cyclicActive ? t('toolbar.stopCyclic') : t('toolbar.cyclicSend') }}</span>
       </button>
       <input
         type="number"
@@ -274,12 +277,12 @@ watch([selectedServerId, selectedCA], () => {
         max="60000"
         step="100"
         v-model.number="cyclicInterval"
-        title="发送间隔 (ms)"
+        :title="t('toolbar.sendInterval')"
       />
       <span class="rate-label">ms</span>
     </div>
     <LangSwitch />
-    <button class="toolbar-title as-button" @click="showAbout = true" title="关于">IEC 104 Slave</button>
+    <button class="toolbar-title as-button" @click="showAbout = true" :title="t('toolbar.about')">{{ t('toolbar.appTitle') }}</button>
   </div>
 
   <AboutDialog :visible="showAbout" @close="showAbout = false" />
@@ -288,9 +291,9 @@ watch([selectedServerId, selectedCA], () => {
   <Teleport to="body">
     <div v-if="showNewServerModal" class="modal-overlay" @mousedown.self="showNewServerModal = false">
       <div class="modal-box">
-        <div class="modal-title">新建服务器</div>
+        <div class="modal-title">{{ t('newServer.title') }}</div>
         <div class="modal-field">
-          <label>端口号</label>
+          <label>{{ t('newServer.portLabel') }}</label>
           <input
             v-model="newServerPort"
             type="number"
@@ -300,24 +303,24 @@ watch([selectedServerId, selectedCA], () => {
           />
         </div>
         <div class="modal-field">
-          <label>初始值</label>
+          <label>{{ t('newServer.initMode') }}</label>
           <div class="radio-group">
             <label class="radio-label">
-              <input type="radio" v-model="newServerInitMode" value="zero" /> 全零
+              <input type="radio" v-model="newServerInitMode" value="zero" /> {{ t('newServer.initZero') }}
             </label>
             <label class="radio-label">
-              <input type="radio" v-model="newServerInitMode" value="random" /> 随机
+              <input type="radio" v-model="newServerInitMode" value="random" /> {{ t('newServer.initRandom') }}
             </label>
           </div>
         </div>
         <div class="modal-field">
           <label class="checkbox-label">
-            <input type="checkbox" v-model="newServerUseTls" /> 启用 TLS
+            <input type="checkbox" v-model="newServerUseTls" /> {{ t('newServer.enableTls') }}
           </label>
         </div>
         <template v-if="newServerUseTls">
           <div class="modal-field">
-            <label>服务器证书文件 (PEM)</label>
+            <label>{{ t('newServer.serverCert') }}</label>
             <input
               v-model="newServerCertFile"
               type="text"
@@ -325,7 +328,7 @@ watch([selectedServerId, selectedCA], () => {
             />
           </div>
           <div class="modal-field">
-            <label>服务器密钥文件 (PEM)</label>
+            <label>{{ t('newServer.serverKey') }}</label>
             <input
               v-model="newServerKeyFile"
               type="text"
@@ -333,7 +336,7 @@ watch([selectedServerId, selectedCA], () => {
             />
           </div>
           <div class="modal-field">
-            <label>CA 证书文件 (PEM, 可选)</label>
+            <label>{{ t('newServer.caFile') }}</label>
             <input
               v-model="newServerCaFile"
               type="text"
@@ -342,13 +345,13 @@ watch([selectedServerId, selectedCA], () => {
           </div>
           <div class="modal-field">
             <label class="checkbox-label">
-              <input type="checkbox" v-model="newServerRequireClientCert" /> 要求客户端证书 (mTLS)
+              <input type="checkbox" v-model="newServerRequireClientCert" /> {{ t('newServer.requireClientCert') }}
             </label>
           </div>
         </template>
         <div class="modal-actions">
-          <button class="modal-btn cancel" @click="showNewServerModal = false">取消</button>
-          <button class="modal-btn confirm" @click="submitNewServer">确定</button>
+          <button class="modal-btn cancel" @click="showNewServerModal = false">{{ t('common.cancel') }}</button>
+          <button class="modal-btn confirm" @click="submitNewServer">{{ t('common.ok') }}</button>
         </div>
       </div>
     </div>

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, inject } from 'vue'
+import { ref, watch, inject, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from '../i18n'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface Props {
@@ -18,16 +20,16 @@ const emit = defineEmits<{
   added: []
 }>()
 
-const ASDU_TYPES = [
-  { value: 'MSpNa1', label: 'M_SP_NA_1 - 单点信息' },
-  { value: 'MDpNa1', label: 'M_DP_NA_1 - 双点信息' },
-  { value: 'MStNa1', label: 'M_ST_NA_1 - 步位置信息' },
-  { value: 'MBoNa1', label: 'M_BO_NA_1 - 位串' },
-  { value: 'MMeNa1', label: 'M_ME_NA_1 - 归一化测量值' },
-  { value: 'MMeNb1', label: 'M_ME_NB_1 - 标度化测量值' },
-  { value: 'MMeNc1', label: 'M_ME_NC_1 - 浮点测量值' },
-  { value: 'MItNa1', label: 'M_IT_NA_1 - 累计量' },
-]
+const ASDU_TYPES = computed(() => [
+  { value: 'MSpNa1', label: t('asduType.sp') },
+  { value: 'MDpNa1', label: t('asduType.dp') },
+  { value: 'MStNa1', label: t('asduType.st') },
+  { value: 'MBoNa1', label: t('asduType.bo') },
+  { value: 'MMeNa1', label: t('asduType.me_na') },
+  { value: 'MMeNb1', label: t('asduType.me_nb') },
+  { value: 'MMeNc1', label: t('asduType.me_nc') },
+  { value: 'MItNa1', label: t('asduType.it') },
+])
 
 const formIoa = ref<number | undefined>(undefined)
 const formAsduType = ref('MSpNa1')
@@ -47,7 +49,7 @@ watch(() => props.visible, (visible) => {
 
 async function handleConfirm() {
   if (formIoa.value === undefined || formIoa.value < 0) {
-    await showAlert('请输入有效的 IOA (>= 0)')
+    await showAlert(t('errors.invalidIoa'))
     return
   }
   isSaving.value = true
@@ -82,47 +84,47 @@ function handleBackdropClick(e: MouseEvent) {
     <div v-if="visible" class="modal-backdrop" @click="handleBackdropClick">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">添加数据点</span>
+          <span class="modal-title">{{ t('pointModal.title') }}</span>
           <button class="btn-close" @click="$emit('close')">×</button>
         </div>
 
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">IOA (信息对象地址)</label>
+            <label class="form-label">{{ t('pointModal.ioaLabel') }}</label>
             <input
               v-model.number="formIoa"
               type="number"
               class="form-input"
               min="0"
-              placeholder="例如: 100"
+              :placeholder="t('pointModal.ioaPlaceholder')"
               @keyup.enter="handleConfirm"
             />
           </div>
 
           <div class="form-group">
-            <label class="form-label">ASDU 类型</label>
+            <label class="form-label">{{ t('pointModal.asduTypeLabel') }}</label>
             <select v-model="formAsduType" class="form-select">
-              <option v-for="t in ASDU_TYPES" :key="t.value" :value="t.value">
-                {{ t.label }}
+              <option v-for="opt in ASDU_TYPES" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
               </option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">名称 (可选)</label>
-            <input v-model="formName" type="text" class="form-input" placeholder="可留空" />
+            <label class="form-label">{{ t('pointModal.nameLabel') }}</label>
+            <input v-model="formName" type="text" class="form-input" :placeholder="t('pointModal.namePlaceholder')" />
           </div>
 
           <div class="form-group">
-            <label class="form-label">备注 (可选)</label>
-            <input v-model="formComment" type="text" class="form-input" placeholder="可留空" />
+            <label class="form-label">{{ t('pointModal.commentLabel') }}</label>
+            <input v-model="formComment" type="text" class="form-input" :placeholder="t('pointModal.commentPlaceholder')" />
           </div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">取消</button>
+          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="handleConfirm" :disabled="isSaving">
-            {{ isSaving ? '添加中...' : '确认' }}
+            {{ isSaving ? t('pointModal.saving') : t('pointModal.add') }}
           </button>
         </div>
       </div>

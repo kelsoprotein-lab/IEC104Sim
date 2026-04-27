@@ -2,10 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { APP_NAME, RELEASE_NOTES, REPO_URL, RELEASES_URL } from '../releaseNotes'
+import { useI18n } from '../i18n'
 
 defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
+const { t } = useI18n()
 const version = ref('')
 const copied = ref('')
 onMounted(async () => {
@@ -19,7 +21,7 @@ onMounted(async () => {
 async function copyLink(url: string, label: string) {
   try {
     await navigator.clipboard.writeText(url)
-    copied.value = `${label} 已复制到剪贴板`
+    copied.value = `${label} ${t('about.copiedSuffix')}`
     setTimeout(() => (copied.value = ''), 1500)
   } catch {
     copied.value = url
@@ -36,19 +38,19 @@ async function copyLink(url: string, label: string) {
           <div class="about-version">v{{ version || '—' }}</div>
         </div>
         <div class="about-body">
-          <div class="about-section-title">本次更新</div>
+          <div class="about-section-title">{{ t('about.whatsNew') }}</div>
           <ul class="about-notes">
             <li v-for="(note, i) in RELEASE_NOTES" :key="i">{{ note }}</li>
           </ul>
           <div class="about-links">
-            <a href="#" @click.prevent="copyLink(REPO_URL, '项目主页')">项目主页</a>
+            <a href="#" @click.prevent="copyLink(REPO_URL, t('about.homepageLabel'))">{{ t('about.homepageLabel') }}</a>
             <span class="about-sep">·</span>
-            <a href="#" @click.prevent="copyLink(RELEASES_URL, '历史版本')">历史版本</a>
+            <a href="#" @click.prevent="copyLink(RELEASES_URL, t('about.releasesLabel'))">{{ t('about.releasesLabel') }}</a>
             <span v-if="copied" class="about-toast">{{ copied }}</span>
           </div>
         </div>
         <div class="about-footer">
-          <button class="btn btn-primary" @click="emit('close')">关闭</button>
+          <button class="btn btn-primary" @click="emit('close')">{{ t('common.close') }}</button>
         </div>
       </div>
     </div>

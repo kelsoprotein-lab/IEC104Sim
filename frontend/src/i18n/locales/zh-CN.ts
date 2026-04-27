@@ -167,6 +167,9 @@ export type DictShape = {
   appDialog: {
     cancel: string
     ok: string
+    titleAlert: string
+    titleConfirm: string
+    titlePrompt: string
   }
   errors: {
     invalidPort: string
@@ -345,6 +348,9 @@ const dict: DictShape = {
   appDialog: {
     cancel: '取消',
     ok: '确定',
+    titleAlert: '提示',
+    titleConfirm: '确认',
+    titlePrompt: '输入',
   },
   errors: {
     invalidPort: '请输入有效的端口号 (1-65535)',

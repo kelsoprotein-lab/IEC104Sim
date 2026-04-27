@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
 import { useDialogState } from '../composables/useDialog'
+import { useI18n } from '../i18n'
 
 const { state, dialogConfirm, dialogCancel } = useDialogState()
+const { t } = useI18n()
 const inputRef = ref<HTMLInputElement | null>(null)
 const inputValue = ref('')
 
@@ -56,11 +58,11 @@ function handleKeydown(e: KeyboardEvent) {
             v-if="state.mode !== 'alert'"
             class="btn btn-secondary"
             @click="dialogCancel"
-          >取消</button>
+          >{{ t('appDialog.cancel') }}</button>
           <button
             class="btn btn-primary"
             @click="handleConfirm"
-          >确定</button>
+          >{{ t('appDialog.ok') }}</button>
         </div>
       </div>
     </div>

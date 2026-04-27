@@ -6,7 +6,9 @@ import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { DataPointInfo } from '../types'
 import DataPointModal from './DataPointModal.vue'
 import BatchAddModal from './BatchAddModal.vue'
+import { useI18n, localizeCategoryLabel } from '../i18n'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 const emit = defineEmits<{
@@ -349,35 +351,35 @@ defineExpose({ loadData: loadDataPoints })
   <div class="data-point-table" @click="closeContextMenu">
     <div class="table-header-bar">
       <span class="table-title">
-        {{ selectedCategory || '全部数据点' }}
+        {{ selectedCategory ? localizeCategoryLabel(selectedCategory) : t('table.allPoints') }}
       </span>
       <input
         v-model="searchQuery"
         class="search-input"
         type="text"
-        placeholder="搜索 IOA / 名称..."
+        :placeholder="t('table.searchPlaceholder')"
       />
       <button
         class="add-btn"
         :disabled="!selectedServerId || currentCA === null"
         @click="showAddModal = true"
-        title="添加数据点"
+        :title="t('table.addPointTitle')"
       >+</button>
       <button
         class="add-btn batch"
         :disabled="!selectedServerId || currentCA === null"
         @click="showBatchModal = true"
-        title="批量添加"
-      >批量</button>
-      <span class="table-count">{{ filteredPoints.length }} 个数据点</span>
+        :title="t('table.batchAdd')"
+      >{{ t('table.batchAdd') }}</button>
+      <span class="table-count">{{ filteredPoints.length }} {{ t('table.countSuffix') }}</span>
     </div>
 
-    <div v-if="isLoading" class="table-loading">加载中...</div>
+    <div v-if="isLoading" class="table-loading">{{ t('common.loading') }}</div>
     <div v-else-if="!selectedServerId || currentCA === null" class="table-empty">
-      请在左侧树形导航中选择一个站
+      {{ t('table.chooseStation') }}
     </div>
     <div v-else-if="filteredPoints.length === 0" class="table-empty">
-      暂无数据点
+      {{ t('table.noPoints') }}
     </div>
 
     <div
@@ -393,11 +395,11 @@ defineExpose({ loadData: loadDataPoints })
         <thead>
           <tr>
             <th class="th-ioa">IOA</th>
-            <th class="th-type">ASDU 类型</th>
-            <th class="th-name">名称</th>
-            <th class="th-value">值</th>
-            <th class="th-quality">品质</th>
-            <th class="th-timestamp">时间戳</th>
+            <th class="th-type">{{ t('table.asduTypeCol') }}</th>
+            <th class="th-name">{{ t('table.nameCol') }}</th>
+            <th class="th-value">{{ t('table.valueCol') }}</th>
+            <th class="th-quality">{{ t('table.qualityCol') }}</th>
+            <th class="th-timestamp">{{ t('table.timestampCol') }}</th>
           </tr>
         </thead>
       </table>
@@ -452,7 +454,7 @@ defineExpose({ loadData: loadDataPoints })
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
       @click.stop
     >
-      <div class="context-menu-item danger" @click="deletePoint">删除数据点</div>
+      <div class="context-menu-item danger" @click="deletePoint">{{ t('table.deletePoint') }}</div>
     </div>
 
     <!-- Add Data Point Modal -->

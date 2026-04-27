@@ -1,4 +1,7 @@
 import { ref, readonly } from 'vue'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 export type DialogMode = 'alert' | 'confirm' | 'prompt'
 
@@ -28,7 +31,7 @@ function open(mode: DialogMode, message: string, defaultValue = ''): Promise<any
     state.value = {
       visible: true,
       mode,
-      title: mode === 'alert' ? '提示' : mode === 'confirm' ? '确认' : '输入',
+      title: mode === 'alert' ? t('appDialog.titleAlert') : mode === 'confirm' ? t('appDialog.titleConfirm') : t('appDialog.titlePrompt'),
       message,
       defaultValue,
       inputValue: defaultValue,

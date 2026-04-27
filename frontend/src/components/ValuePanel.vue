@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { DataPointInfo } from '../types'
+import { useI18n, localizeCategoryLabel } from '../i18n'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
 const selectedCA = inject<Ref<number | null>>('selectedCA')!
@@ -86,68 +88,68 @@ function handleEditKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="value-panel">
-    <div class="panel-header">数据点详情</div>
+    <div class="panel-header">{{ t('valuePanel.title') }}</div>
 
     <div v-if="!hasSelection" class="empty-state">
-      选择一个数据点查看详情
+      {{ t('valuePanel.selectPointHint') }}
     </div>
 
     <template v-else-if="isSingle && pointDetail">
       <!-- Single point detail -->
       <div class="detail-section">
-        <div class="section-title">基本信息</div>
+        <div class="section-title">{{ t('valuePanel.sectionInfo') }}</div>
         <div class="detail-row">
           <span class="detail-label">IOA</span>
           <span class="detail-value mono">{{ pointDetail.ioa }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">ASDU 类型</span>
+          <span class="detail-label">{{ t('valuePanel.asduType') }}</span>
           <span class="detail-value">{{ pointDetail.asdu_type }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">分类</span>
-          <span class="detail-value">{{ pointDetail.category }}</span>
+          <span class="detail-label">{{ t('valuePanel.category') }}</span>
+          <span class="detail-value">{{ localizeCategoryLabel(pointDetail.category) }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">名称</span>
+          <span class="detail-label">{{ t('valuePanel.name') }}</span>
           <span class="detail-value">{{ pointDetail.name || '-' }}</span>
         </div>
         <div v-if="pointDetail.comment" class="detail-row">
-          <span class="detail-label">备注</span>
+          <span class="detail-label">{{ t('valuePanel.comment') }}</span>
           <span class="detail-value">{{ pointDetail.comment }}</span>
         </div>
       </div>
 
       <div class="detail-section">
-        <div class="section-title">当前值</div>
+        <div class="section-title">{{ t('valuePanel.sectionCurrent') }}</div>
         <div class="detail-row">
-          <span class="detail-label">值</span>
+          <span class="detail-label">{{ t('valuePanel.value') }}</span>
           <span class="detail-value mono editable" @click="startEdit">{{ pointDetail.value }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">品质</span>
+          <span class="detail-label">{{ t('valuePanel.quality') }}</span>
           <span class="detail-value">
-            <span v-if="pointDetail.quality_iv" class="quality-badge invalid">IV (无效)</span>
-            <span v-else class="quality-badge ok">正常</span>
+            <span v-if="pointDetail.quality_iv" class="quality-badge invalid">{{ t('valuePanel.qualityInvalid') }}</span>
+            <span v-else class="quality-badge ok">{{ t('valuePanel.qualityValid') }}</span>
           </span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">时间戳</span>
+          <span class="detail-label">{{ t('valuePanel.timestamp') }}</span>
           <span class="detail-value mono">{{ pointDetail.timestamp || '-' }}</span>
         </div>
       </div>
 
       <div class="detail-section">
-        <div class="section-title">写入值</div>
+        <div class="section-title">{{ t('valuePanel.sectionWrite') }}</div>
         <div class="write-row">
           <input
             v-model="editValue"
             class="write-input"
             type="text"
-            placeholder="输入新值"
+            :placeholder="t('valuePanel.valuePlaceholder')"
             @keydown="handleEditKeydown"
           />
-          <button class="write-btn" @click="writeValue">写入</button>
+          <button class="write-btn" @click="writeValue">{{ t('valuePanel.write') }}</button>
         </div>
       </div>
     </template>
@@ -156,10 +158,10 @@ function handleEditKeydown(e: KeyboardEvent) {
       <!-- Multiple selection -->
       <div class="multi-info">
         <div class="detail-section">
-          <div class="section-title">批量选中</div>
+          <div class="section-title">{{ t('valuePanel.sectionMultiSelect') }}</div>
           <div class="detail-row">
-            <span class="detail-label">数量</span>
-            <span class="detail-value">{{ selectedPoints.length }} 个数据点</span>
+            <span class="detail-label">{{ t('valuePanel.countLabel') }}</span>
+            <span class="detail-value">{{ selectedPoints.length }} {{ t('table.countSuffix') }}</span>
           </div>
           <div class="ioa-list">
             <span v-for="p in selectedPoints" :key="p.ioa" class="ioa-chip">
