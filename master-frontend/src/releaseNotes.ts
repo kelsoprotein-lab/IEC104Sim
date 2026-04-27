@@ -4,7 +4,6 @@ export const RELEASES_URL = 'https://github.com/kelsoprotein-lab/IEC104Sim/relea
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '新增: 新建连接可选择 TLS 版本策略(Auto / 仅 TLS 1.2 / 仅 TLS 1.3)',
-  '新增: 新建连接表单自动持久化,下次打开自动回填上次的 TLS 路径与目标地址',
-  '改进: 窗口标题精简为 IEC104Master;移除源码中写死的本机绝对路径',
+  '新增: 点击"连接"成功后自动发送一次总召唤,无需手动再点',
+  '改进: 新建连接的 TLS 证书路径默认填入 ./ca.pem / ./client.pem / ./client-key.pem,开箱即用',
 ]

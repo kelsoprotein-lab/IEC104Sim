@@ -2,6 +2,14 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.7] - 2026-04-27
+
+### 新增
+- **主站**:点击"连接"成功后自动发送一次总召唤(GI),无需手动再点。GI 失败仅在控制台告警,不影响连接状态。
+
+### 改进
+- **主站**:新建连接对话框的 TLS 证书路径默认填入 `./ca.pem` / `./client.pem` / `./client-key.pem`(相对路径),首次启用 TLS 即可开箱使用;localStorage 中已有空字符串的字段也会回填默认值。
+
 ## [1.0.6] - 2026-04-24
 
 ### 新增
