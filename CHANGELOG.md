@@ -2,6 +2,17 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **主站 + 从站**:UI 支持中英文运行时切换。工具栏右侧 `中 / EN` 按钮一键切换;首次启动跟随系统语言(`navigator.language` 以 `zh` 开头则中文,否则英文),用户切换后通过 `localStorage` 持久化。
+- **主站**:LogPanel `详情` 列改由前端字典渲染。后端控制命令(单点 / 双点 / 步调节 / 归一化设定值 / 标度化设定值 / 浮点设定值)同时携带结构化 `detail_event { kind, payload }`,前端在切换语言时已显示的日志会立即重新渲染为新语言。
+- **主站 + 从站**:LogPanel CSV 导出改为前端基于已渲染文本生成,导出文件跟随当前 UI 语言;表头与 detail 列均使用当前 locale。
+- **核心库**:`LogEntry` 新增可选 `detail_event` 字段(向后兼容,序列化时 `Option::is_none` 跳过),用于前端 i18n 渲染。
+
+### 改进
+- **从站**:默认站名不再硬编码为 `站 1`。后端 `commands.rs` 创建默认 station 时传空字符串,前端 ConnectionTree 显示时回退到 `t('station.defaultName', { ca })`,实现真正的语言无关存储。
+
 ## [1.0.7] - 2026-04-27
 
 ### 新增
