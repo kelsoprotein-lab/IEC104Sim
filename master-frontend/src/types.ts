@@ -29,6 +29,7 @@ export interface LogEntry {
   frame_label: { [key: string]: string } | string
   detail: string
   raw_bytes: number[] | null
+  detail_event?: { kind: string; payload: Record<string, unknown> } | null
 }
 
 export type CommandType = 'single' | 'double' | 'step' | 'setpoint_normalized' | 'setpoint_scaled' | 'setpoint_float' | 'bitstring'

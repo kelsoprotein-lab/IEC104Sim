@@ -2,6 +2,9 @@
 import { ref, inject, onMounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry, ConnectionInfo } from '../types'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 interface Props {
   expanded: boolean
@@ -52,18 +55,45 @@ async function clearLogs() {
   } catch (_e) { /* ignore */ }
 }
 
-async function exportLogs() {
-  if (!selectedConnId.value) return
-  try {
-    const csv = await invoke<string>('export_logs_csv', { connectionId: selectedConnId.value })
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `iec104_master_log_${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (_e) { /* ignore */ }
+function formatDetail(log: LogEntry): string {
+  if (log.detail_event && log.detail_event.kind) {
+    return t(`log.${log.detail_event.kind}`, log.detail_event.payload)
+  }
+  return log.detail
+}
+
+function csvEscape(s: string): string {
+  return s.replace(/"/g, '""')
+}
+
+function exportLogs() {
+  if (!selectedConnId.value || logs.value.length === 0) return
+  const lines: string[] = []
+  lines.push([
+    t('log.timeCol'), t('log.directionCol'), t('log.frameCol'), t('log.detailCol'), t('log.rawCol'),
+  ].map(h => `"${csvEscape(h)}"`).join(','))
+  for (const log of logs.value) {
+    const ts = formatTimestamp(log.timestamp)
+    const dir = formatDirection(log.direction)
+    const frame = formatFrameLabel(log.frame_label)
+    const detail = formatDetail(log)
+    const raw = formatRawBytes(log.raw_bytes)
+    lines.push([
+      `"${csvEscape(ts)}"`,
+      `"${csvEscape(dir)}"`,
+      `"${csvEscape(frame)}"`,
+      `"${csvEscape(detail)}"`,
+      `"${csvEscape(raw)}"`,
+    ].join(','))
+  }
+  const csv = '﻿' + lines.join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `iec104_master_log_${Date.now()}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function formatTimestamp(ts: string): string {
@@ -180,29 +210,29 @@ onMounted(async () => {
   <div :class="['log-panel', { expanded }]">
     <div class="log-header" @click="emit('toggle')">
       <span class="log-toggle">{{ expanded ? '\u25BC' : '\u25B2' }}</span>
-      <span class="log-title">通信日志</span>
+      <span class="log-title">{{ t('log.title') }}</span>
       <span v-if="!expanded && logs.length > 0" class="log-count">{{ logs.length }}</span>
       <div class="log-controls" @click.stop>
         <select v-model="selectedConnId" class="conn-select" @change="loadLogs">
           <option v-for="conn in connectionList" :key="conn.id" :value="conn.id">{{ conn.label }}</option>
         </select>
-        <button class="log-btn" @click="loadLogs">刷新</button>
-        <button class="log-btn" @click="clearLogs">清空</button>
-        <button class="log-btn" @click="exportLogs">导出</button>
+        <button class="log-btn" @click="loadLogs">{{ t('log.refresh') }}</button>
+        <button class="log-btn" @click="clearLogs">{{ t('log.clear') }}</button>
+        <button class="log-btn" @click="exportLogs">{{ t('log.export') }}</button>
       </div>
     </div>
 
     <div v-if="expanded" class="log-body">
-      <div v-if="connectionList.length === 0" class="log-empty">暂无连接</div>
-      <div v-else-if="logs.length === 0" class="log-empty">暂无日志</div>
+      <div v-if="connectionList.length === 0" class="log-empty">{{ t('log.noConnections') }}</div>
+      <div v-else-if="logs.length === 0" class="log-empty">{{ t('log.noLogs') }}</div>
       <table v-else class="log-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>方向</th>
-            <th>帧类型</th>
-            <th>详情</th>
-            <th>原始数据</th>
+            <th>{{ t('log.timeCol') }}</th>
+            <th>{{ t('log.directionCol') }}</th>
+            <th>{{ t('log.frameCol') }}</th>
+            <th>{{ t('log.detailCol') }}</th>
+            <th>{{ t('log.rawCol') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -210,7 +240,7 @@ onMounted(async () => {
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', dirClass(log.direction)]">{{ formatDirection(log.direction) }}</td>
             <td :class="['col-frame', frameLabelClass(log.frame_label)]">{{ formatFrameLabel(log.frame_label) }}</td>
-            <td class="col-detail">{{ log.detail }}</td>
+            <td class="col-detail">{{ formatDetail(log) }}</td>
             <td class="col-raw">{{ formatRawBytes(log.raw_bytes) }}</td>
           </tr>
         </tbody>
