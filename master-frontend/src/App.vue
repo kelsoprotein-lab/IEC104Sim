@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, provide, onMounted, onUnmounted } from 'vue'
+import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import Toolbar from './components/Toolbar.vue'
@@ -21,6 +21,46 @@ const selectedCA = ref<number | null>(null)
 const selectedCategory = ref<string | null>(null)
 const selectedPoints = ref<ReceivedDataPointInfo[]>([])
 const logExpanded = ref(false)
+
+const LOG_H_KEY = 'iec104.logPanel.height'
+function readSavedHeight(): number {
+  try {
+    const v = parseInt(localStorage.getItem(LOG_H_KEY) || '', 10)
+    if (!isNaN(v) && v > 0) return v
+  } catch { /* ignore */ }
+  return 220
+}
+const logHeight = ref<number>(readSavedHeight())
+
+function clampLogHeight(h: number): number {
+  const max = Math.max(120, Math.floor(window.innerHeight * 0.7))
+  return Math.min(max, Math.max(80, h))
+}
+
+const gridRows = computed(() => {
+  if (!logExpanded.value) return '42px 1fr 0 32px'
+  return `42px 1fr 4px ${logHeight.value}px`
+})
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = logHeight.value
+  document.body.style.cursor = 'ns-resize'
+  document.body.style.userSelect = 'none'
+  function onMove(ev: MouseEvent) {
+    logHeight.value = clampLogHeight(startH + (startY - ev.clientY))
+  }
+  function onUp() {
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    try { localStorage.setItem(LOG_H_KEY, String(logHeight.value)) } catch { /* ignore */ }
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
 
 // Provide shared state to children
 provide('selectedConnectionId', selectedConnectionId)
@@ -126,7 +166,7 @@ function snoozeUpdate() {
 </script>
 
 <template>
-  <div :class="['app-layout', { 'log-expanded': logExpanded }]">
+  <div :class="['app-layout', { 'log-expanded': logExpanded }]" :style="{ gridTemplateRows: gridRows }">
     <header class="toolbar-area">
       <Toolbar />
     </header>
@@ -146,6 +186,13 @@ function snoozeUpdate() {
       <ValuePanel />
     </aside>
 
+    <div
+      v-show="logExpanded"
+      class="log-resizer"
+      role="separator"
+      aria-orientation="horizontal"
+      @mousedown="startResize"
+    />
     <footer class="log-area">
       <LogPanel :expanded="logExpanded" @toggle="toggleLog" />
     </footer>
@@ -179,20 +226,41 @@ body {
   color: #cdd6f4;
 }
 
+/* Dark scrollbars across the app — overrides macOS "Always show" white tracks */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: #181825;
+}
+*::-webkit-scrollbar-thumb {
+  background: #313244;
+  border-radius: 5px;
+  border: 2px solid #181825;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #45475a;
+}
+*::-webkit-scrollbar-corner {
+  background: #181825;
+}
+* {
+  scrollbar-color: #313244 #181825;
+  scrollbar-width: thin;
+}
+
 .app-layout {
   display: grid;
   grid-template-columns: 260px 1fr 280px;
-  grid-template-rows: 42px 1fr 32px;
+  grid-template-rows: 42px 1fr 0 32px;
   grid-template-areas:
     "toolbar toolbar toolbar"
     "tree content panel"
+    "resizer resizer resizer"
     "log log log";
   height: 100vh;
   width: 100vw;
-}
-
-.app-layout.log-expanded {
-  grid-template-rows: 42px 1fr 200px;
 }
 
 .toolbar-area {
@@ -219,6 +287,19 @@ body {
   background: #181825;
   border-left: 1px solid #313244;
   overflow-y: auto;
+}
+
+.log-resizer {
+  grid-area: resizer;
+  height: 4px;
+  background: #313244;
+  cursor: ns-resize;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.log-resizer:hover {
+  background: #89b4fa;
 }
 
 .log-area {

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry, ConnectionInfo } from '../types'
 import { useI18n } from '../i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 interface Props {
   expanded: boolean
@@ -70,18 +70,20 @@ function exportLogs() {
   if (!selectedConnId.value || logs.value.length === 0) return
   const lines: string[] = []
   lines.push([
-    t('log.timeCol'), t('log.directionCol'), t('log.frameCol'), t('log.detailCol'), t('log.rawCol'),
+    t('log.timeCol'), t('log.directionCol'), t('log.frameCol'), t('log.causeCol'), t('log.detailCol'), t('log.rawCol'),
   ].map(h => `"${csvEscape(h)}"`).join(','))
   for (const log of logs.value) {
     const ts = formatTimestamp(log.timestamp)
     const dir = formatDirection(log.direction)
     const frame = formatFrameLabel(log.frame_label)
+    const cause = formatCause(log)
     const detail = formatDetail(log)
     const raw = formatRawBytes(log.raw_bytes)
     lines.push([
       `"${csvEscape(ts)}"`,
       `"${csvEscape(dir)}"`,
       `"${csvEscape(frame)}"`,
+      `"${csvEscape(cause)}"`,
       `"${csvEscape(detail)}"`,
       `"${csvEscape(raw)}"`,
     ].join(','))
@@ -100,7 +102,7 @@ function formatTimestamp(ts: string): string {
   try {
     const date = new Date(ts)
     if (isNaN(date.getTime())) return ts
-    return date.toLocaleTimeString('zh-CN', {
+    return date.toLocaleTimeString(locale.value, {
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
@@ -116,34 +118,58 @@ function formatDirection(dir: string): string {
   return dir.toUpperCase()
 }
 
+const FRAME_KEY_MAP: Record<string, string> = {
+  i_frame: 'iFrame',
+  s_frame: 'sFrame',
+  u_start_act: 'uStartAct',
+  u_start_con: 'uStartCon',
+  u_stop_act: 'uStopAct',
+  u_stop_con: 'uStopCon',
+  u_test_act: 'uTestAct',
+  u_test_con: 'uTestCon',
+  general_interrogation: 'generalInterrogation',
+  counter_read: 'counterRead',
+  clock_sync: 'clockSync',
+  single_command: 'singleCommand',
+  double_command: 'doubleCommand',
+  setpoint_normalized: 'setpointNormalized',
+  setpoint_scaled: 'setpointScaled',
+  setpoint_float: 'setpointFloat',
+  connection_event: 'connectionEvent',
+}
+
 function formatFrameLabel(label: LogEntry['frame_label']): string {
-  if (typeof label === 'string') return label
-  // FrameLabel is serialized as a tagged enum, e.g. { "i_frame": "M_SP_NA_1" } or "s_frame"
+  if (typeof label === 'string') {
+    // Serde may serialize unit variants as a bare string (e.g. "s_frame")
+    const dictKey = FRAME_KEY_MAP[label]
+    return dictKey ? t(`log.frame.${dictKey}`, { value: '' }) : label
+  }
   const keys = Object.keys(label)
   if (keys.length === 0) return ''
   const key = keys[0]
   const value = label[key]
+  const dictKey = FRAME_KEY_MAP[key]
+  return dictKey ? t(`log.frame.${dictKey}`, { value }) : key
+}
 
-  const labelMap: Record<string, string> = {
-    i_frame: `I ${value}`,
-    s_frame: 'S',
-    u_start_act: 'U STARTDT ACT',
-    u_start_con: 'U STARTDT CON',
-    u_stop_act: 'U STOPDT ACT',
-    u_stop_con: 'U STOPDT CON',
-    u_test_act: 'U TESTFR ACT',
-    u_test_con: 'U TESTFR CON',
-    general_interrogation: 'GI',
-    counter_read: 'CI',
-    clock_sync: 'CS',
-    single_command: 'C_SC',
-    double_command: 'C_DC',
-    setpoint_normalized: 'C_SE_NA',
-    setpoint_scaled: 'C_SE_NB',
-    setpoint_float: 'C_SE_NC',
-    connection_event: 'CONN',
+function extractCot(log: LogEntry): number | null {
+  const ev = log.detail_event
+  if (ev) {
+    const payload = ev.payload as Record<string, unknown> | undefined
+    const v = payload?.cot
+    if (typeof v === 'number') return v
   }
-  return labelMap[key] || key
+  const m = /COT=(\d+)/.exec(log.detail || '')
+  return m ? parseInt(m[1], 10) : null
+}
+
+function formatCause(log: LogEntry): string {
+  const cot = extractCot(log)
+  if (cot === null) return ''
+  const key = `log.cot.${cot}`
+  const name = t(key)
+  if (name === key) return t('log.cot.unknown', { cot })
+  return `${cot} · ${name}`
 }
 
 function formatRawBytes(raw: number[] | null): string {
@@ -156,10 +182,10 @@ function dirClass(dir: string): string {
 }
 
 function frameLabelClass(label: LogEntry['frame_label']): string {
-  const text = formatFrameLabel(label)
-  if (text.startsWith('U ')) return 'frame-u'
-  if (text.startsWith('I ')) return 'frame-i'
-  if (text === 'S') return 'frame-s'
+  const key = typeof label === 'string' ? label : Object.keys(label)[0] || ''
+  if (key === 'i_frame') return 'frame-i'
+  if (key === 's_frame') return 'frame-s'
+  if (key.startsWith('u_')) return 'frame-u'
   return ''
 }
 
@@ -231,6 +257,7 @@ onMounted(async () => {
             <th>{{ t('log.timeCol') }}</th>
             <th>{{ t('log.directionCol') }}</th>
             <th>{{ t('log.frameCol') }}</th>
+            <th>{{ t('log.causeCol') }}</th>
             <th>{{ t('log.detailCol') }}</th>
             <th>{{ t('log.rawCol') }}</th>
           </tr>
@@ -240,6 +267,7 @@ onMounted(async () => {
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', dirClass(log.direction)]">{{ formatDirection(log.direction) }}</td>
             <td :class="['col-frame', frameLabelClass(log.frame_label)]">{{ formatFrameLabel(log.frame_label) }}</td>
+            <td class="col-cause">{{ formatCause(log) }}</td>
             <td class="col-detail">{{ formatDetail(log) }}</td>
             <td class="col-raw">{{ formatRawBytes(log.raw_bytes) }}</td>
           </tr>
@@ -379,6 +407,14 @@ onMounted(async () => {
 .col-frame.frame-u { color: #cba6f7; }
 .col-frame.frame-i { color: #89dceb; }
 .col-frame.frame-s { color: #f9e2af; }
+
+.col-cause {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #f9e2af;
+  width: 160px;
+  white-space: nowrap;
+}
 
 .col-detail {
   font-family: 'SF Mono', 'Fira Code', monospace;
