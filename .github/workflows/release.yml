@@ -75,19 +75,41 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Upload updater artifacts (sig + bundles)
-        if: steps.tauri.outputs.artifactPaths != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo '${{ steps.tauri.outputs.artifactPaths }}' | jq -r '.[]' | while IFS= read -r f; do
-            case "$f" in
-              *.sig|*.app.tar.gz|*.nsis.zip|*.AppImage.tar.gz)
+          case "${{ runner.os }}" in
+            macOS)
+              case "${{ matrix.rust_target }}" in
+                aarch64-apple-darwin) arch="aarch64" ;;
+                x86_64-apple-darwin) arch="x64" ;;
+                *) echo "unknown rust_target ${{ matrix.rust_target }}" ; exit 1 ;;
+              esac
+              for sig in target/${{ matrix.rust_target }}/release/bundle/macos/*.app.tar.gz.sig; do
+                [ -e "$sig" ] || continue
+                stem=$(basename "$sig" .app.tar.gz.sig)
+                renamed="/tmp/${stem}_${arch}.app.tar.gz.sig"
+                cp "$sig" "$renamed"
+                echo "Uploading $renamed"
+                gh release upload "${{ github.ref_name }}" "$renamed" --clobber --repo "${{ github.repository }}"
+              done
+              ;;
+            Linux)
+              for f in target/release/bundle/appimage/IEC104*.AppImage.tar.gz target/release/bundle/appimage/IEC104*.AppImage.tar.gz.sig; do
+                [ -e "$f" ] || continue
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
-                ;;
-            esac
-          done
+              done
+              ;;
+            Windows)
+              for f in target/release/bundle/nsis/IEC104*.nsis.zip target/release/bundle/nsis/IEC104*.nsis.zip.sig; do
+                [ -e "$f" ] || continue
+                echo "Uploading $f"
+                gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
+              done
+              ;;
+          esac
 
   build-master:
     strategy:
@@ -155,19 +177,41 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Upload updater artifacts (sig + bundles)
-        if: steps.tauri.outputs.artifactPaths != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo '${{ steps.tauri.outputs.artifactPaths }}' | jq -r '.[]' | while IFS= read -r f; do
-            case "$f" in
-              *.sig|*.app.tar.gz|*.nsis.zip|*.AppImage.tar.gz)
+          case "${{ runner.os }}" in
+            macOS)
+              case "${{ matrix.rust_target }}" in
+                aarch64-apple-darwin) arch="aarch64" ;;
+                x86_64-apple-darwin) arch="x64" ;;
+                *) echo "unknown rust_target ${{ matrix.rust_target }}" ; exit 1 ;;
+              esac
+              for sig in target/${{ matrix.rust_target }}/release/bundle/macos/*.app.tar.gz.sig; do
+                [ -e "$sig" ] || continue
+                stem=$(basename "$sig" .app.tar.gz.sig)
+                renamed="/tmp/${stem}_${arch}.app.tar.gz.sig"
+                cp "$sig" "$renamed"
+                echo "Uploading $renamed"
+                gh release upload "${{ github.ref_name }}" "$renamed" --clobber --repo "${{ github.repository }}"
+              done
+              ;;
+            Linux)
+              for f in target/release/bundle/appimage/IEC104*.AppImage.tar.gz target/release/bundle/appimage/IEC104*.AppImage.tar.gz.sig; do
+                [ -e "$f" ] || continue
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
-                ;;
-            esac
-          done
+              done
+              ;;
+            Windows)
+              for f in target/release/bundle/nsis/IEC104*.nsis.zip target/release/bundle/nsis/IEC104*.nsis.zip.sig; do
+                [ -e "$f" ] || continue
+                echo "Uploading $f"
+                gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
+              done
+              ;;
+          esac
 
   publish-manifest:
     needs: [build-slave, build-master]

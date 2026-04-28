@@ -2,11 +2,17 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.11] - 2026-04-28
+
+### 修复
+- **CI**: v1.0.10 的修复方向正确(`includeUpdaterJson: false`)但 upload step 用了 `tauri-action` 的 `outputs.artifactPaths`,而该输出实际只列主 installer,不含 `.sig` 与 updater bundle。本版本改为按 `runner.os` 分支直接 glob `target/.../bundle/{macos,nsis,appimage}/` 目录:macOS 把 `.app.tar.gz.sig` 加上 arch 后缀防 aarch64/x64 互相覆盖;Linux/Windows 上传 `IEC104*.AppImage.tar.gz(.sig)` / `IEC104*.nsis.zip(.sig)`。
+- 自此 v1.0.9 / v1.0.10 用户启动应用后将自动收到 v1.0.11 的更新提示。
+
 ## [1.0.10] - 2026-04-28
 
 ### 修复
 - **CI**: 修复 release workflow 没有把 `*.sig` 文件和 updater bundles (Windows `.nsis.zip` / Linux `.AppImage.tar.gz`) 上传到 release 的问题。原因是 `tauri-action` 在多 app 同 tag 场景下生成内置 updater JSON 失败,连带跳过了 sig 上传。本版本通过设置 `includeUpdaterJson: false` 让 tauri-action 只上传 bundles + sig,manifest JSON 由独立 `publish-manifest` job 生成。
-- 自此 v1.0.9 用户启动应用后将自动收到 v1.0.10 的更新提示。
+- 注:本版本 upload step 实现有缺陷,实际未正确上传 sig 和 bundle,需 v1.0.11 修复。
 
 ## [1.0.9] - 2026-04-28
 
