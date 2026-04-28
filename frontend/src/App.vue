@@ -82,12 +82,12 @@ function toggleLog() {
   logExpanded.value = !logExpanded.value
 }
 
-const updateMeta = ref<{ version: string; notes: string } | null>(null)
+const updateMeta = ref<{ version: string; notes: string; pub_date?: string | null } | null>(null)
 const updateVisible = ref(false)
 
 async function checkUpdate() {
   try {
-    const meta = await invoke<{ version: string; notes: string } | null>('check_for_update')
+    const meta = await invoke<{ version: string; notes: string; pub_date?: string | null } | null>('check_for_update')
     if (meta) {
       updateMeta.value = meta
       updateVisible.value = true

@@ -68,6 +68,12 @@ async function main() {
   for (const role of ['slave', 'master']) {
     const platforms = {}
     for (const [key, val] of Object.entries(grouped[role])) {
+      if (!val.sigUrl) {
+        throw new Error(
+          `missing .sig for ${role}/${key} (asset ${val.url}). ` +
+          `Did the TAURI_SIGNING_PRIVATE_KEY secret get configured on the runner?`
+        )
+      }
       const sig = await fetchSigContent(val.sigUrl)
       platforms[key] = { signature: sig, url: val.url }
     }

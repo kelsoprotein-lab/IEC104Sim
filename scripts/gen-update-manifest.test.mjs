@@ -28,4 +28,9 @@ describe('extractChangelogSection', () => {
   it('returns empty string when version not found', () => {
     expect(extractChangelogSection(md, '9.9.9')).toBe('')
   })
+  it('does not match a version that is a prefix of another', () => {
+    const md2 = `## 1.0.10\n- new\n\n## 1.0.1\n- old\n`
+    expect(extractChangelogSection(md2, '1.0.1')).toBe('- old')
+    expect(extractChangelogSection(md2, '1.0.10')).toBe('- new')
+  })
 })
