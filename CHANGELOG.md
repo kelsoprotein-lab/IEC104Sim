@@ -2,6 +2,11 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.12] - 2026-04-28
+
+### 修复
+- **CI**: v1.0.11 的 upload step 用 bash glob (`target/release/bundle/.../IEC104*.tar.gz`) 在 GitHub-hosted runner 上没匹配到任何文件(具体原因待诊断,可能是 cwd / 文件清理时机问题)。本版本改用 `find target -path "*/release/bundle/.../" -name "IEC104*..."` 的方式,并新增一个 Debug 步骤打印 target 目录下所有 `.tar.gz / .zip / .sig` 文件以便排查。
+
 ## [1.0.11] - 2026-04-28
 
 ### 修复

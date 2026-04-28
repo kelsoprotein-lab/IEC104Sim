@@ -74,6 +74,14 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
 
+      - name: Debug bundle contents
+        shell: bash
+        run: |
+          echo "PWD: $(pwd)"
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          echo "---find target -name *.tar.gz/.zip/.sig---"
+          find target -type f \( -name "*.tar.gz" -o -name "*.tar.gz.sig" -o -name "*.zip" -o -name "*.zip.sig" \) 2>/dev/null | head -40 || true
+
       - name: Upload updater artifacts (sig + bundles)
         shell: bash
         env:
@@ -84,10 +92,8 @@ jobs:
               case "${{ matrix.rust_target }}" in
                 aarch64-apple-darwin) arch="aarch64" ;;
                 x86_64-apple-darwin) arch="x64" ;;
-                *) echo "unknown rust_target ${{ matrix.rust_target }}" ; exit 1 ;;
               esac
-              for sig in target/${{ matrix.rust_target }}/release/bundle/macos/*.app.tar.gz.sig; do
-                [ -e "$sig" ] || continue
+              find target -type f -name "*.app.tar.gz.sig" -path "*/release/bundle/macos/*" 2>/dev/null | while IFS= read -r sig; do
                 stem=$(basename "$sig" .app.tar.gz.sig)
                 renamed="/tmp/${stem}_${arch}.app.tar.gz.sig"
                 cp "$sig" "$renamed"
@@ -96,15 +102,13 @@ jobs:
               done
               ;;
             Linux)
-              for f in target/release/bundle/appimage/IEC104*.AppImage.tar.gz target/release/bundle/appimage/IEC104*.AppImage.tar.gz.sig; do
-                [ -e "$f" ] || continue
+              find target -type f \( -name "IEC104*.AppImage.tar.gz" -o -name "IEC104*.AppImage.tar.gz.sig" \) -path "*/release/bundle/appimage/*" 2>/dev/null | while IFS= read -r f; do
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
               done
               ;;
             Windows)
-              for f in target/release/bundle/nsis/IEC104*.nsis.zip target/release/bundle/nsis/IEC104*.nsis.zip.sig; do
-                [ -e "$f" ] || continue
+              find target -type f \( -name "IEC104*.nsis.zip" -o -name "IEC104*.nsis.zip.sig" \) -path "*/release/bundle/nsis/*" 2>/dev/null | while IFS= read -r f; do
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
               done
@@ -176,6 +180,14 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
 
+      - name: Debug bundle contents
+        shell: bash
+        run: |
+          echo "PWD: $(pwd)"
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          echo "---find target -name *.tar.gz/.zip/.sig---"
+          find target -type f \( -name "*.tar.gz" -o -name "*.tar.gz.sig" -o -name "*.zip" -o -name "*.zip.sig" \) 2>/dev/null | head -40 || true
+
       - name: Upload updater artifacts (sig + bundles)
         shell: bash
         env:
@@ -186,10 +198,8 @@ jobs:
               case "${{ matrix.rust_target }}" in
                 aarch64-apple-darwin) arch="aarch64" ;;
                 x86_64-apple-darwin) arch="x64" ;;
-                *) echo "unknown rust_target ${{ matrix.rust_target }}" ; exit 1 ;;
               esac
-              for sig in target/${{ matrix.rust_target }}/release/bundle/macos/*.app.tar.gz.sig; do
-                [ -e "$sig" ] || continue
+              find target -type f -name "*.app.tar.gz.sig" -path "*/release/bundle/macos/*" 2>/dev/null | while IFS= read -r sig; do
                 stem=$(basename "$sig" .app.tar.gz.sig)
                 renamed="/tmp/${stem}_${arch}.app.tar.gz.sig"
                 cp "$sig" "$renamed"
@@ -198,15 +208,13 @@ jobs:
               done
               ;;
             Linux)
-              for f in target/release/bundle/appimage/IEC104*.AppImage.tar.gz target/release/bundle/appimage/IEC104*.AppImage.tar.gz.sig; do
-                [ -e "$f" ] || continue
+              find target -type f \( -name "IEC104*.AppImage.tar.gz" -o -name "IEC104*.AppImage.tar.gz.sig" \) -path "*/release/bundle/appimage/*" 2>/dev/null | while IFS= read -r f; do
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
               done
               ;;
             Windows)
-              for f in target/release/bundle/nsis/IEC104*.nsis.zip target/release/bundle/nsis/IEC104*.nsis.zip.sig; do
-                [ -e "$f" ] || continue
+              find target -type f \( -name "IEC104*.nsis.zip" -o -name "IEC104*.nsis.zip.sig" \) -path "*/release/bundle/nsis/*" 2>/dev/null | while IFS= read -r f; do
                 echo "Uploading $f"
                 gh release upload "${{ github.ref_name }}" "$f" --clobber --repo "${{ github.repository }}"
               done
