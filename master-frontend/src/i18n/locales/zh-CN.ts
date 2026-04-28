@@ -18,6 +18,7 @@ export type DictShape = {
     sendGI: string
     clockSync: string
     counterRead: string
+    customControl: string
     appTitle: string
     about: string
   }
@@ -98,6 +99,7 @@ export type DictShape = {
     timeCol: string
     directionCol: string
     frameCol: string
+    causeCol: string
     detailCol: string
     rawCol: string
     refresh: string
@@ -109,6 +111,26 @@ export type DictShape = {
     setpointNormalized: string
     setpointScaled: string
     setpointFloat: string
+    frame: {
+      iFrame: string
+      sFrame: string
+      uStartAct: string
+      uStartCon: string
+      uStopAct: string
+      uStopCon: string
+      uTestAct: string
+      uTestCon: string
+      generalInterrogation: string
+      counterRead: string
+      clockSync: string
+      singleCommand: string
+      doubleCommand: string
+      setpointNormalized: string
+      setpointScaled: string
+      setpointFloat: string
+      connectionEvent: string
+    }
+    cot: Record<string, string>
   }
   control: {
     title: string
@@ -204,6 +226,7 @@ const dict: DictShape = {
     sendGI: '总召唤',
     clockSync: '时钟同步',
     counterRead: '累计量召唤',
+    customControl: '自定义控制',
     appTitle: 'IEC104 Master',
     about: '关于',
   },
@@ -284,6 +307,7 @@ const dict: DictShape = {
     timeCol: '时间',
     directionCol: '方向',
     frameCol: '帧类型',
+    causeCol: '传送原因',
     detailCol: '详情',
     rawCol: '原始数据',
     refresh: '刷新',
@@ -295,6 +319,67 @@ const dict: DictShape = {
     setpointNormalized: '归一化设定值 IOA={ioa} val={val}',
     setpointScaled: '标度化设定值 IOA={ioa} val={val}',
     setpointFloat: '浮点设定值 IOA={ioa} val={val}',
+    frame: {
+      iFrame: 'I {value}',
+      sFrame: 'S 帧',
+      uStartAct: 'U 启动激活',
+      uStartCon: 'U 启动确认',
+      uStopAct: 'U 停止激活',
+      uStopCon: 'U 停止确认',
+      uTestAct: 'U 测试激活',
+      uTestCon: 'U 测试确认',
+      generalInterrogation: '总召',
+      counterRead: '计数召唤',
+      clockSync: '对时',
+      singleCommand: '单点命令',
+      doubleCommand: '双点命令',
+      setpointNormalized: '归一设定值',
+      setpointScaled: '标度设定值',
+      setpointFloat: '浮点设定值',
+      connectionEvent: '连接事件',
+    },
+    cot: {
+      unknown: '未知({cot})',
+      '1': '周期/循环',
+      '2': '背景扫描',
+      '3': '突发',
+      '4': '初始化',
+      '5': '请求',
+      '6': '激活',
+      '7': '激活确认',
+      '8': '停止激活',
+      '9': '停止激活确认',
+      '10': '激活终止',
+      '11': '远方命令引起的返回信息',
+      '12': '本地命令引起的返回信息',
+      '13': '文件传输',
+      '20': '响应总召',
+      '21': '响应第1组召唤',
+      '22': '响应第2组召唤',
+      '23': '响应第3组召唤',
+      '24': '响应第4组召唤',
+      '25': '响应第5组召唤',
+      '26': '响应第6组召唤',
+      '27': '响应第7组召唤',
+      '28': '响应第8组召唤',
+      '29': '响应第9组召唤',
+      '30': '响应第10组召唤',
+      '31': '响应第11组召唤',
+      '32': '响应第12组召唤',
+      '33': '响应第13组召唤',
+      '34': '响应第14组召唤',
+      '35': '响应第15组召唤',
+      '36': '响应第16组召唤',
+      '37': '响应计数器总召',
+      '38': '响应第1组计数器召唤',
+      '39': '响应第2组计数器召唤',
+      '40': '响应第3组计数器召唤',
+      '41': '响应第4组计数器召唤',
+      '44': '未知类型标识',
+      '45': '未知传送原因',
+      '46': '未知公共地址',
+      '47': '未知信息对象地址',
+    },
   },
   control: {
     title: '发送控制命令',

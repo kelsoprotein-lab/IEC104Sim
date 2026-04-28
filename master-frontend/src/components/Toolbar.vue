@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import AboutDialog from './AboutDialog.vue'
+import ControlDialog from './ControlDialog.vue'
 import LangSwitch from './LangSwitch.vue'
 import { useI18n } from '../i18n'
 
@@ -17,6 +18,24 @@ const refreshData = inject<() => void>('refreshData')!
 
 // About dialog
 const showAbout = ref(false)
+
+// Free-form control dialog (entry from the toolbar; no preselected point)
+const showCustomControl = ref(false)
+const customControlCA = ref<number>(1)
+async function openCustomControl() {
+  customControlCA.value = 1
+  // If a connection is selected, default the dialog's CA to its first
+  // configured Common Address — saves the user a step in single-CA setups
+  // and gives a sensible starting point in multi-CA ones.
+  if (selectedConnectionId.value) {
+    try {
+      const conns = await invoke<{ id: string; common_addresses: number[] }[]>('list_connections')
+      const conn = conns.find((c) => c.id === selectedConnectionId.value)
+      if (conn?.common_addresses?.length) customControlCA.value = conn.common_addresses[0]
+    } catch { /* ignore — fall back to 1 */ }
+  }
+  showCustomControl.value = true
+}
 
 // New Connection modal — persist the user's last-used form values so that
 // TLS paths, target address, etc. survive across app restarts.
@@ -265,6 +284,9 @@ const hasConnection = () => selectedConnectionId.value !== null
       <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="sendCounterRead">
         {{ t('toolbar.counterRead') }}
       </button>
+      <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="openCustomControl">
+        {{ t('toolbar.customControl') }}
+      </button>
     </div>
 
     <div class="toolbar-spacer"></div>
@@ -275,6 +297,20 @@ const hasConnection = () => selectedConnectionId.value !== null
   </div>
 
   <AboutDialog :visible="showAbout" @close="showAbout = false" />
+
+  <!-- Free-form control dialog. The user can pick a CA, type any IOA,
+       choose a command type, and send — independent of any selected
+       data point. Useful for sending control commands to IOAs that
+       haven't been received yet (e.g. write-only points). -->
+  <ControlDialog
+    :visible="showCustomControl"
+    :connection-id="selectedConnectionId"
+    :common-address="customControlCA"
+    :prefill-ioa="null"
+    :prefill-command-type="null"
+    @close="showCustomControl = false"
+    @sent="showCustomControl = false"
+  />
 
   <!-- New Connection Modal -->
   <Teleport to="body">
