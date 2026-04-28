@@ -519,7 +519,13 @@ impl MasterConnection {
         self.shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
 
         if let Some(handle) = self.receiver_handle.take() {
-            let _ = handle.await;
+            // Cap the wait so disconnect() can never hang the Tauri command
+            // thread. The receiver loop polls shutdown_flag after each
+            // (potentially blocking) read; if the read happens to be stuck
+            // (rare TLS edge case where the read timeout doesn't propagate),
+            // we abandon the join — the task will exit on the next read
+            // timeout and drop its Arc, freeing the underlying socket.
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
 
         *self.stream.write().await = None;

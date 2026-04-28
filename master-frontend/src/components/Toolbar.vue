@@ -144,12 +144,24 @@ async function connectMaster() {
 
 async function disconnectMaster() {
   if (!selectedConnectionId.value) return
+  let alertErr: unknown = null
   try {
     await invoke('disconnect_master', { id: selectedConnectionId.value })
+  } catch (e) {
+    // "NotConnected" is benign: backend already saw the socket close before
+    // the user clicked. For any other error we still surface it but also
+    // force the UI to Disconnected so the user isn't stuck with a dead
+    // button while the backend reconciles.
+    const msg = String(e)
+    if (!msg.includes('NotConnected') && !msg.includes('not connected')) {
+      alertErr = e
+    }
+  } finally {
     selectedConnectionState.value = 'Disconnected'
     refreshTree()
-  } catch (e) {
-    await showAlert(String(e))
+  }
+  if (alertErr !== null) {
+    await showAlert(String(alertErr))
   }
 }
 

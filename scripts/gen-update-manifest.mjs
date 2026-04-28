@@ -39,7 +39,8 @@ export function groupAssetsByRole(assets) {
 
 export function extractChangelogSection(md, version) {
   const lines = md.split('\n')
-  const startRe = new RegExp(`^##\\s+${version.replace(/\./g, '\\.')}\\b`)
+  // Match both `## 1.2.3` and `## [1.2.3]` (Keep a Changelog style).
+  const startRe = new RegExp(`^##\\s+\\[?${version.replace(/\./g, '\\.')}\\]?\\b`)
   let inSection = false
   const out = []
   for (const line of lines) {

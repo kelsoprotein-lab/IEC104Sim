@@ -154,3 +154,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload ${{ github.ref_name }} latest-slave.json latest-master.json --clobber
+
+      - name: Render rich release body from CHANGELOG
+        run: node scripts/build-release-notes.mjs ${{ github.ref_name }}
+
+      - name: Replace release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit ${{ github.ref_name }} --notes-file RELEASE_BODY.md

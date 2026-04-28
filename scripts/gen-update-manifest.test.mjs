@@ -52,4 +52,9 @@ describe('extractChangelogSection', () => {
     expect(extractChangelogSection(md2, '1.0.1')).toBe('- old')
     expect(extractChangelogSection(md2, '1.0.10')).toBe('- new')
   })
+  it('handles the Keep-a-Changelog bracket style `## [1.2.3] - date`', () => {
+    const md3 = `## [1.2.3] - 2026-04-28\n- new\n\n## [1.2.2] - 2026-04-27\n- old\n`
+    expect(extractChangelogSection(md3, '1.2.3')).toBe('- new')
+    expect(extractChangelogSection(md3, '1.2.2')).toBe('- old')
+  })
 })
