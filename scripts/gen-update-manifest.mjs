@@ -57,12 +57,31 @@ async function fetchSigContent(url) {
   return (await res.text()).trim()
 }
 
+async function fetchReleaseWithRetry(tag, attempts = 6, delayMs = 5000) {
+  // tauri-action's per-job upload races with publish-manifest's start: even
+  // when every build job has reported success, GitHub's REST API can take
+  // a few seconds to surface the release for the freshly-pushed tag. Retry
+  // a handful of times before bailing out so a transient 404 doesn't kill
+  // the whole release pipeline.
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return execFileSync('gh', ['api', `repos/${REPO}/releases/tags/${tag}`], { encoding: 'utf8' })
+    } catch (e) {
+      const stderr = String(e.stderr ?? '')
+      const isNotFound = stderr.includes('Not Found') || stderr.includes('HTTP 404')
+      if (!isNotFound || i === attempts) throw e
+      console.error(`release ${tag} not visible yet (attempt ${i}/${attempts}), retrying in ${delayMs}ms…`)
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+  }
+}
+
 async function main() {
   const tag = process.argv[2]
   if (!tag) { console.error('usage: gen-update-manifest.mjs <tag>'); process.exit(1) }
   const version = tag.replace(/^v/, '')
 
-  const json = execFileSync('gh', ['api', `repos/${REPO}/releases/tags/${tag}`], { encoding: 'utf8' })
+  const json = await fetchReleaseWithRetry(tag)
   const release = JSON.parse(json)
   const grouped = groupAssetsByRole(release.assets)
 
