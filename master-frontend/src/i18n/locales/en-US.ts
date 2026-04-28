@@ -170,6 +170,17 @@ const dict: DictShape = {
   errors: {
     connectFailed: 'Connect failed: {err}\nWill retry every {sec}s. Click "Disconnect" to stop.',
   },
+  update: {
+    available: 'Update available',
+    newVersion: 'Version v{version} is available',
+    changelog: 'Release notes',
+    installNow: 'Install now',
+    later: 'Later',
+    downloading: 'Downloading {pct}%',
+    failedTitle: 'Update failed',
+    retry: 'Retry',
+    close: 'Close',
+  },
   _test: {
     interp: 'Order #{id} created by {user}',
   },

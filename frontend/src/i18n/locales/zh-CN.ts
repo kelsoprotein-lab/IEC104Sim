@@ -176,6 +176,17 @@ export type DictShape = {
     invalidCa: string
     invalidIoa: string
   }
+  update: {
+    available: string
+    newVersion: string
+    changelog: string
+    installNow: string
+    later: string
+    downloading: string
+    failedTitle: string
+    retry: string
+    close: string
+  }
   _test: { interp: string }
 }
 
@@ -356,6 +367,17 @@ const dict: DictShape = {
     invalidPort: '请输入有效的端口号 (1-65535)',
     invalidCa: '请输入有效的公共地址 (1-65534)',
     invalidIoa: '请输入有效的 IOA (>= 0)',
+  },
+  update: {
+    available: '检测到新版本',
+    newVersion: '新版本 v{version} 可用',
+    changelog: '更新说明',
+    installNow: '立即更新',
+    later: '稍后',
+    downloading: '正在下载 {pct}%',
+    failedTitle: '更新失败',
+    retry: '重试',
+    close: '关闭',
   },
   _test: {
     interp: '订单 #{id} 由 {user} 创建',

@@ -178,6 +178,17 @@ const dict: DictShape = {
     invalidCa: 'Please enter a valid common address (1-65534)',
     invalidIoa: 'Please enter a valid IOA (>= 0)',
   },
+  update: {
+    available: 'Update available',
+    newVersion: 'Version v{version} is available',
+    changelog: 'Release notes',
+    installNow: 'Install now',
+    later: 'Later',
+    downloading: 'Downloading {pct}%',
+    failedTitle: 'Update failed',
+    retry: 'Retry',
+    close: 'Close',
+  },
   _test: {
     interp: 'Order #{id} created by {user}',
   },
