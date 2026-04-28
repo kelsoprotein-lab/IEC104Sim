@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, provide } from 'vue'
+import { ref, provide, onMounted } from 'vue'
 import Toolbar from './components/Toolbar.vue'
 import ConnectionTree from './components/ConnectionTree.vue'
 import DataPointTable from './components/DataPointTable.vue'
 import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import AppDialog from './components/AppDialog.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
+import { invoke } from '@tauri-apps/api/core'
 import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
 
 const dataPointTableRef = ref<InstanceType<typeof DataPointTable> | null>(null)
@@ -79,6 +81,31 @@ function handlePointSelect(points: { ioa: number; value: string }[]) {
 function toggleLog() {
   logExpanded.value = !logExpanded.value
 }
+
+const updateMeta = ref<{ version: string; notes: string } | null>(null)
+const updateVisible = ref(false)
+
+async function checkUpdate() {
+  try {
+    const meta = await invoke<{ version: string; notes: string } | null>('check_for_update')
+    if (meta) {
+      updateMeta.value = meta
+      updateVisible.value = true
+    }
+  } catch (e) {
+    console.warn('update check failed', e)
+  }
+}
+
+onMounted(() => {
+  setTimeout(checkUpdate, 2000)
+})
+
+function snoozeUpdate() {
+  if (updateMeta.value) {
+    invoke('snooze_update', { version: updateMeta.value.version }).catch(() => {})
+  }
+}
 </script>
 
 <template>
@@ -108,6 +135,13 @@ function toggleLog() {
       <LogPanel :expanded="logExpanded" @toggle="toggleLog" />
     </footer>
     <AppDialog />
+    <UpdateDialog
+      :visible="updateVisible"
+      :version="updateMeta?.version ?? ''"
+      :notes="updateMeta?.notes ?? ''"
+      @close="updateVisible = false"
+      @snooze="snoozeUpdate"
+    />
   </div>
 </template>
 
