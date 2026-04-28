@@ -4,5 +4,5 @@ export const RELEASES_URL = 'https://github.com/kelsoprotein-lab/IEC60870-5-104-
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '改进: 与主站同步打包发布; 从站本身在本版本无新功能, 后续版本仍会自动收到推送更新',
+  '修复: macOS 给 .app 加 ad-hoc 签名, 修 v1.1.1 及之前下载后被 macOS 判定为 "已损坏" 的问题',
 ]

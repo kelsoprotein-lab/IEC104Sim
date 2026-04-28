@@ -111,6 +111,21 @@ cargo tauri dev
 从 v1.0.9 起，两个应用在启动时自动检测 GitHub Releases，发现新版本会弹窗提示安装。
 v1.0.8 及更早版本的用户需要手动升级一次到 v1.0.9，之后将自动收到后续更新。
 
+### macOS 安装提示
+
+应用未做 Apple 公证（Notarization）。从 v1.1.2 起 dmg 内的 .app 带 ad-hoc 签名，
+首次打开时 macOS 会提示"无法验证开发者"，**右键 → 打开** 即可绕过。
+
+如果你下载的是 v1.1.1 或更早的 dmg，看到 **"已损坏，无法打开"** 提示，是因为
+旧版完全没签名，被新 macOS 直接判定为损坏。终端跑一行解决：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/IEC104Master.app"
+xattr -dr com.apple.quarantine "/Applications/IEC104Slave.app"
+```
+
+或直接升级到 v1.1.2 及以后的版本（应用内"检查更新"也会推过来）。
+
 ## 许可证
 
 MIT

@@ -111,6 +111,22 @@ See [CHANGELOG.md](CHANGELOG.md) or the [Releases page](https://github.com/kelso
 Starting from v1.0.9, both apps check GitHub Releases on startup and prompt the user to install
 new versions. Users on v1.0.8 or earlier need to upgrade manually one time.
 
+### macOS install note
+
+The bundles are **not Apple-notarized** (no paid Developer Program). From v1.1.2 the `.app`
+inside the dmg is ad-hoc signed, so on first launch macOS shows the standard "unidentified
+developer" warning — right-click → **Open** to bypass.
+
+If you downloaded a v1.1.1 or earlier dmg and see **"is damaged, can't be opened, move to
+Trash"**, that's the unsigned-app behaviour newer macOS enforces. Run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/IEC104Master.app"
+xattr -dr com.apple.quarantine "/Applications/IEC104Slave.app"
+```
+
+…or upgrade to v1.1.2+ (the in-app updater will push it).
+
 ## License
 
 MIT

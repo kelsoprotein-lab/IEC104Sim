@@ -2,6 +2,21 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2] - 2026-04-28
+
+### 修复 / Fixed
+
+- **macOS**: 给 `.app` bundle 加 ad-hoc 签名 (`bundle.macOS.signingIdentity: "-"`),修 v1.1.1 及之前版本下载后 macOS 弹 **"IEC104Master / IEC104Slave 已损坏,无法打开"** 的问题。原因是 Apple Silicon (以及部分新 macOS) 对完全无签名的 app 直接拒绝打开,而不是给"无法验证开发者"的可绕过提示。Ad-hoc 签名后会变成温和的"无法验证开发者",可右键 → 打开 / Add ad-hoc signing so unsigned macOS bundles no longer trigger the "is damaged, move to Trash" prompt; users still see the "unverified developer" warning but can right-click → Open.
+
+### macOS 升级备注 / Upgrade note for macOS users
+
+- 已经装了 v1.1.1 或之前版本并且看到"已损坏"提示的用户,**不必重装**:终端跑一行
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/IEC104Master.app"
+  xattr -dr com.apple.quarantine "/Applications/IEC104Slave.app"
+  ```
+  即可正常打开。从 v1.1.2 开始下载的 dmg 不再有此问题。
+
 ## [1.1.1] - 2026-04-28
 
 > 围绕 v1.1.0 的多 CA 能力做了完整的数据面 + 操作面收尾,并修复了 master 上一个老 bug。Patch release,任何 v1.0.9+ 的用户都可自动收到。
