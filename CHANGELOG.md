@@ -2,6 +2,23 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.4] - 2026-04-28
+
+### Highlights / 亮点
+
+- 🔁 **仓库迁移收尾** / Repo transfer cleanup — 仓库已从 `kelsoprotein-lab/IEC60870-5-104-Simulator` 迁移到 `Carl-Dai/IEC60870-5-104-Simulator`。GitHub 的 301 重定向让 v1.1.0–v1.1.3 老用户继续工作没问题,但本版本把所有硬编码 URL (updater endpoint、CI 脚本 REPO 常量、应用内 About 链接、README badge / 链接) 都更新成新地址,长期上不再依赖 GitHub 重定向 / Repo moved from `kelsoprotein-lab` to `Carl-Dai`. GitHub's 301 redirect keeps v1.1.0–v1.1.3 working, but this release flips every hardcoded URL in updater endpoints, CI scripts, in-app About links, and README badges to the new owner so we don't depend on the redirect long-term.
+
+### Changed 改进
+
+- **主站 + 从站**: `tauri.conf.json` 的 `plugins.updater.endpoints` 指向新仓库 / Updater endpoints in both `tauri.conf.json` files.
+- **CI 脚本**: `scripts/gen-update-manifest.mjs` 与 `scripts/build-release-notes.mjs` 的 `REPO` 常量更新 / `REPO` constant in both manifest scripts.
+- **应用内 About**: 双 frontend 的 `releaseNotes.ts` `REPO_URL` / `RELEASES_URL` 更新 / `REPO_URL` and `RELEASES_URL` in both frontends' `releaseNotes.ts`.
+- **README**: 双语 README 顶部 badge、Releases 链接、changelog 链接全部更新 / Both READMEs updated (badges, Releases links, changelog links).
+
+### Internal 内部
+
+- 历史 `CHANGELOG.md` / `docs/superpowers/` 里的旧 URL 没有动 — 它们记录的是当时的状态,改动会曲解历史 / Old URLs in historical CHANGELOG entries and `docs/superpowers/` are intentionally left as-is; rewriting them would distort the historical record.
+
 ## [1.1.3] - 2026-04-28
 
 ### Highlights / 亮点

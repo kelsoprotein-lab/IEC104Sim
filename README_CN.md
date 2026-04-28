@@ -1,6 +1,6 @@
 # IEC 60870-5-104 Simulator
 
-[![GitHub Release](https://img.shields.io/github/v/release/kelsoprotein-lab/IEC104Sim)](https://github.com/kelsoprotein-lab/IEC104Sim/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/Carl-Dai/IEC60870-5-104-Simulator)](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
@@ -29,7 +29,7 @@
 
 ## 下载安装
 
-Windows、macOS 和 Linux 平台的安装包可在 [Releases](https://github.com/kelsoprotein-lab/IEC104Sim/releases) 页面下载。
+Windows、macOS 和 Linux 平台的安装包可在 [Releases](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases) 页面下载。
 
 ## 功能特性
 
@@ -134,7 +134,7 @@ cargo tauri dev
 
 ## 更新日志
 
-最新变更请参见 [CHANGELOG.md](CHANGELOG.md) 或 [Releases 页面](https://github.com/kelsoprotein-lab/IEC104Sim/releases)。
+最新变更请参见 [CHANGELOG.md](CHANGELOG.md) 或 [Releases 页面](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases)。
 
 ### 自动更新
 

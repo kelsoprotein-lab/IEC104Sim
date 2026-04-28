@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { extractChangelogSection } from './gen-update-manifest.mjs'
 
-const REPO = 'kelsoprotein-lab/IEC60870-5-104-Simulator'
+const REPO = 'Carl-Dai/IEC60870-5-104-Simulator'
 const REPO_URL = `https://github.com/${REPO}`
 
 const APPS = [

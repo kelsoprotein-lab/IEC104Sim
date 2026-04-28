@@ -1,6 +1,6 @@
 # IEC 60870-5-104 Simulator
 
-[![GitHub Release](https://img.shields.io/github/v/release/kelsoprotein-lab/IEC104Sim)](https://github.com/kelsoprotein-lab/IEC104Sim/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/Carl-Dai/IEC60870-5-104-Simulator)](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
@@ -29,7 +29,7 @@ receives the spontaneous response stream from each station.
 
 ## Download
 
-Pre-built installers for Windows, macOS, and Linux are available on the [Releases](https://github.com/kelsoprotein-lab/IEC104Sim/releases) page.
+Pre-built installers for Windows, macOS, and Linux are available on the [Releases](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases) page.
 
 ## Features
 
@@ -136,7 +136,7 @@ cargo tauri dev
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) or the [Releases page](https://github.com/kelsoprotein-lab/IEC104Sim/releases).
+See [CHANGELOG.md](CHANGELOG.md) or the [Releases page](https://github.com/Carl-Dai/IEC60870-5-104-Simulator/releases).
 
 ### Auto-update
 

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const REPO = 'kelsoprotein-lab/IEC60870-5-104-Simulator'
+const REPO = 'Carl-Dai/IEC60870-5-104-Simulator'
 
 // Tauri 2 with bundle.createUpdaterArtifacts: true publishes:
 //   - macOS: <name>_<arch>.app.tar.gz (no version in name)
