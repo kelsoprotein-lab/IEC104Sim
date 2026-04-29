@@ -38,6 +38,7 @@ export type DictShape = {
     initMode: string
     initZero: string
     initRandom: string
+    countPerCategory: string
     enableTls: string
     serverCert: string
     serverKey: string
@@ -72,13 +73,21 @@ export type DictShape = {
   }
   asduType: {
     sp: string
+    sp_tb: string
     dp: string
+    dp_tb: string
     st: string
+    st_tb: string
     bo: string
+    bo_tb: string
     me_na: string
+    me_td: string
     me_nb: string
+    me_te: string
     me_nc: string
+    me_tf: string
     it: string
+    it_tb: string
   }
   table: {
     allPoints: string
@@ -230,6 +239,7 @@ const dict: DictShape = {
     initMode: '初始值',
     initZero: '全零',
     initRandom: '随机',
+    countPerCategory: '每类点数',
     enableTls: '启用 TLS',
     serverCert: '服务器证书文件 (PEM)',
     serverKey: '服务器密钥文件 (PEM)',
@@ -264,13 +274,21 @@ const dict: DictShape = {
   },
   asduType: {
     sp: 'M_SP_NA_1 - 单点信息',
+    sp_tb: 'M_SP_TB_1 - 单点 (带时标)',
     dp: 'M_DP_NA_1 - 双点信息',
+    dp_tb: 'M_DP_TB_1 - 双点 (带时标)',
     st: 'M_ST_NA_1 - 步位置信息',
+    st_tb: 'M_ST_TB_1 - 步位置 (带时标)',
     bo: 'M_BO_NA_1 - 位串',
+    bo_tb: 'M_BO_TB_1 - 位串 (带时标)',
     me_na: 'M_ME_NA_1 - 归一化测量值',
+    me_td: 'M_ME_TD_1 - 归一化 (带时标)',
     me_nb: 'M_ME_NB_1 - 标度化测量值',
+    me_te: 'M_ME_TE_1 - 标度化 (带时标)',
     me_nc: 'M_ME_NC_1 - 浮点测量值',
+    me_tf: 'M_ME_TF_1 - 浮点 (带时标)',
     it: 'M_IT_NA_1 - 累计量',
+    it_tb: 'M_IT_TB_1 - 累计量 (带时标)',
   },
   table: {
     allPoints: '全部数据点',

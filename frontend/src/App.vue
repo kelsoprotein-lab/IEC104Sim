@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, provide, onMounted } from 'vue'
+import { ref, provide, onMounted, onUnmounted } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import Toolbar from './components/Toolbar.vue'
 import ConnectionTree from './components/ConnectionTree.vue'
 import DataPointTable from './components/DataPointTable.vue'
@@ -17,7 +18,7 @@ const selectedServerId = ref<string | null>(null)
 const selectedServerState = ref<string>('Stopped')
 const selectedCA = ref<number | null>(null)
 const selectedCategory = ref<string | null>(null)
-const selectedPoints = ref<{ ioa: number; value: string }[]>([])
+const selectedPoints = ref<{ ioa: number; asdu_type: string; value: string }[]>([])
 const logExpanded = ref(false)
 
 // Provide shared state to children
@@ -74,7 +75,7 @@ function handleCategorySelect(serverId: string, ca: number, category: string) {
   dataPointTableRef.value?.loadData()
 }
 
-function handlePointSelect(points: { ioa: number; value: string }[]) {
+function handlePointSelect(points: { ioa: number; asdu_type: string; value: string }[]) {
   selectedPoints.value = points
 }
 
@@ -97,8 +98,24 @@ async function checkUpdate() {
   }
 }
 
-onMounted(() => {
+// Backend pushes server-state-changed on every start/stop; without this the
+// toolbar buttons & tree dot drift out of sync when actions originate
+// outside the toolbar (e.g. tree context menu, error-driven auto-stop).
+let unlistenServerState: (() => void) | null = null
+
+onMounted(async () => {
+  unlistenServerState = await listen<{ id: string; state: string }>('server-state-changed', (event) => {
+    const { id, state } = event.payload
+    if (selectedServerId.value === id) {
+      selectedServerState.value = state
+    }
+    refreshTree()
+  })
   setTimeout(checkUpdate, 2000)
+})
+
+onUnmounted(() => {
+  unlistenServerState?.()
 })
 
 function snoozeUpdate() {

@@ -30,6 +30,8 @@ pub struct CreateServerRequest {
     pub bind_address: Option<String>,
     pub port: u16,
     pub init_mode: Option<String>,
+    /// 默认 station 每个 ASDU 类型分类下的点数（缺省 10）。0 = 空站。
+    pub count_per_category: Option<u32>,
     pub use_tls: Option<bool>,
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
@@ -67,9 +69,10 @@ pub async fn create_server(
     let server = SlaveServer::new(transport).with_log_collector(log_collector.clone());
 
     // Auto-create default station (CA=1) with pre-filled data points
+    let n = request.count_per_category.unwrap_or(10);
     let default_station = match request.init_mode.as_deref() {
-        Some("random") => Station::with_random_points(1, "", 10),
-        _ => Station::with_default_points(1, "", 10),
+        Some("random") => Station::with_random_points(1, "", n),
+        _ => Station::with_default_points(1, "", n),
     };
     server
         .add_station(default_station)
@@ -273,15 +276,30 @@ pub async fn list_stations(
 // ---------------------------------------------------------------------------
 
 fn parse_asdu_type(s: &str) -> Result<AsduTypeId, String> {
-    match s {
-        "m_sp_na_1" | "MSpNa1" => Ok(AsduTypeId::MSpNa1),
-        "m_dp_na_1" | "MDpNa1" => Ok(AsduTypeId::MDpNa1),
-        "m_st_na_1" | "MStNa1" => Ok(AsduTypeId::MStNa1),
-        "m_bo_na_1" | "MBoNa1" => Ok(AsduTypeId::MBoNa1),
-        "m_me_na_1" | "MMeNa1" => Ok(AsduTypeId::MMeNa1),
-        "m_me_nb_1" | "MMeNb1" => Ok(AsduTypeId::MMeNb1),
-        "m_me_nc_1" | "MMeNc1" => Ok(AsduTypeId::MMeNc1),
-        "m_it_na_1" | "MItNa1" => Ok(AsduTypeId::MItNa1),
+    // 归一化: 小写 + 仅保留字母数字。涵盖三种来源:
+    // PascalCase 枚举名 ("MSpNa1") / 小写下划线 ("m_sp_na_1") /
+    // 前端从 list_data_points 拿到的显示名 ("M_SP_NA_1").
+    let key: String = s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    match key.as_str() {
+        "mspna1" => Ok(AsduTypeId::MSpNa1),
+        "msptb1" => Ok(AsduTypeId::MSpTb1),
+        "mdpna1" => Ok(AsduTypeId::MDpNa1),
+        "mdptb1" => Ok(AsduTypeId::MDpTb1),
+        "mstna1" => Ok(AsduTypeId::MStNa1),
+        "msttb1" => Ok(AsduTypeId::MStTb1),
+        "mbona1" => Ok(AsduTypeId::MBoNa1),
+        "mbotb1" => Ok(AsduTypeId::MBoTb1),
+        "mmena1" => Ok(AsduTypeId::MMeNa1),
+        "mmenb1" => Ok(AsduTypeId::MMeNb1),
+        "mmenc1" => Ok(AsduTypeId::MMeNc1),
+        "mmetd1" => Ok(AsduTypeId::MMeTd1),
+        "mmete1" => Ok(AsduTypeId::MMeTe1),
+        "mmetf1" => Ok(AsduTypeId::MMeTf1),
+        "mitna1" => Ok(AsduTypeId::MItNa1),
+        "mittb1" => Ok(AsduTypeId::MItTb1),
         _ => Err(format!("unknown ASDU type: {}", s)),
     }
 }

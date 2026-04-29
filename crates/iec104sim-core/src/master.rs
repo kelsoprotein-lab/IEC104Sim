@@ -350,23 +350,20 @@ impl MasterReceivedData {
 /// 15-bit SSN/RSN wrap at 32768; helpers `seq_lt` / `seq_inc` handle that.
 #[derive(Debug)]
 pub struct ProtocolState {
-    /// Send Sequence Number — next SSN to use when sending an I-frame.
     pub ssn: u16,
-    /// Receive Sequence Number — next SSN expected from peer.
     pub rsn: u16,
-    /// Outgoing I-frames awaiting ACK: (their SSN, t1 deadline).
-    pub pending_acks: std::collections::VecDeque<(u16, std::time::Instant)>,
-    /// Number of received I-frames since we last sent an S/I frame.
+    /// SSNs of outgoing I-frames awaiting ACK. Drained as the peer's RSN
+    /// advances; size is capped by `k`. (Per-frame deadlines were dropped
+    /// when t1 enforcement moved to the TESTFR liveness loop.)
+    pub pending_acks: std::collections::VecDeque<u16>,
     pub unacked_received: u16,
-    /// Last time we received any frame (resets t3 idle timer).
     pub last_rx: std::time::Instant,
-    /// Deadline for sending an S-frame ACK (armed on first I-frame after
-    /// our last ACK; cleared when we send any S/I frame). None = idle.
+    /// Deadline for the delayed S-frame ACK (armed on the first received
+    /// I-frame after our last ACK; cleared when we send any S/I frame).
     pub pending_ack_deadline: Option<std::time::Instant>,
-    /// If we've sent TESTFR_ACT, the deadline by which we expect TESTFR_CON.
-    /// None = no test in flight.
+    /// Set when TESTFR_ACT is in flight; cleared by any received frame.
+    /// Liveness watchdog drops the link when this is `Some(d)` and `now >= d`.
     pub test_pending_deadline: Option<std::time::Instant>,
-    /// Cached protocol parameters from MasterConfig.
     pub t1: std::time::Duration,
     pub t2: std::time::Duration,
     pub t3: std::time::Duration,
@@ -477,9 +474,7 @@ impl MasterConnection {
         }
 
         self.state_tx.send_replace(MasterState::Connecting);
-        // Reset protocol state on new connection — pulls fresh values from
-        // the (possibly mutated) MasterConfig so config tweaks between
-        // connect cycles take effect.
+        // Re-build from config so timer tweaks between reconnects take effect.
         *self.protocol.lock().unwrap() = ProtocolState::new(
             std::time::Duration::from_secs(self.config.t1 as u64),
             std::time::Duration::from_secs(self.config.t2 as u64),
@@ -490,9 +485,8 @@ impl MasterConnection {
         self.shutdown_flag.store(false, std::sync::atomic::Ordering::SeqCst);
 
         let addr = format!("{}:{}", self.config.target_address, self.config.port);
-        // Prefer t0 (seconds, IEC 104 spec param) over the legacy timeout_ms
-        // when t0 differs from the default. This keeps old configs working
-        // while letting new configs use the spec field.
+        // `timeout_ms` is the legacy field; honour it only when t0 is left
+        // at the default so old persisted configs continue to work.
         let timeout = if self.config.t0 != default_t0() {
             std::time::Duration::from_secs(self.config.t0 as u64)
         } else {
@@ -576,8 +570,6 @@ impl MasterConnection {
                     .map_err(|e| MasterError::ConnectionError(format!("Failed to send STARTDT: {}", e)))?;
             }
 
-            // Mark protocol state's last_rx now that the link is up — the
-            // t3 idle timer counts from here.
             self.protocol.lock().unwrap().last_rx = std::time::Instant::now();
             self.state_tx.send_replace(MasterState::Connected);
 
@@ -609,7 +601,6 @@ impl MasterConnection {
             };
 
             *self.stream.write().await = Some(master_stream);
-            // Mark t3 baseline now that the link is up.
             self.protocol.lock().unwrap().last_rx = std::time::Instant::now();
             self.state_tx.send_replace(MasterState::Connected);
 
@@ -636,7 +627,6 @@ impl MasterConnection {
             ));
         }
 
-        // Spawn the optional periodic GI / counter interrogation poller.
         self.spawn_periodic_poller();
 
         Ok(())
@@ -1163,8 +1153,7 @@ async fn send_async_frame(
         let mut s = protocol.lock().unwrap();
         let ssn = s.ssn;
         let rsn = s.rsn;
-        let deadline = std::time::Instant::now() + s.t1;
-        s.pending_acks.push_back((ssn, deadline));
+        s.pending_acks.push_back(ssn);
         s.ssn = seq_inc(s.ssn);
         // I-frame piggybacks our RSN — clears any pending S-frame ACK.
         s.unacked_received = 0;
@@ -1278,7 +1267,7 @@ fn receive_loop(
 
         // Tick timers every iteration regardless of read result so t1/t2/t3
         // fire even on a totally idle link.
-        if !tick_timers(&protocol, &log_collector, &ack_notify, &mut stream, &state_tx, &shutdown_flag) {
+        if !tick_timers(&protocol, &log_collector, &mut stream, &state_tx, &shutdown_flag) {
             break;
         }
 
@@ -1361,7 +1350,7 @@ fn receive_loop_mutex(
         // the same mutex as user sends.
         {
             let mut writer = TlsWriter(&stream);
-            if !tick_timers(&protocol, &log_collector, &ack_notify, &mut writer, &state_tx, &shutdown_flag) {
+            if !tick_timers(&protocol, &log_collector, &mut writer, &state_tx, &shutdown_flag) {
                 break;
             }
         }
@@ -1445,7 +1434,6 @@ enum TickAction {
 fn tick_timers<W: RawWrite>(
     protocol: &Arc<std::sync::Mutex<ProtocolState>>,
     log_collector: &Option<Arc<LogCollector>>,
-    _ack_notify: &Arc<tokio::sync::Notify>,
     writer: &mut W,
     state_tx: &tokio::sync::watch::Sender<MasterState>,
     shutdown_flag: &Arc<std::sync::atomic::AtomicBool>,
@@ -1480,33 +1468,37 @@ fn tick_timers<W: RawWrite>(
             false
         }
         TickAction::SendSFrame(rsn) => {
-            let rsn_bytes = (rsn << 1).to_le_bytes();
-            let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
+            let s_frame = build_s_frame(rsn);
             let _ = writer.write_raw(&s_frame);
-            if let Some(ref lc) = log_collector {
-                lc.try_add(LogEntry::with_raw_bytes(
-                    Direction::Tx,
-                    FrameLabel::SFrame,
-                    format!("S 帧 (t2 触发的 ACK) RSN={}", rsn),
-                    s_frame.to_vec(),
-                ));
-            }
+            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, format!("S 帧 (t2 触发的 ACK) RSN={}", rsn));
             true
         }
         TickAction::SendTestFr => {
-            let f = [0x68, 0x04, 0x43, 0x00, 0x00, 0x00];
+            let f = TESTFR_ACT;
             let _ = writer.write_raw(&f);
-            if let Some(ref lc) = log_collector {
-                lc.try_add(LogEntry::with_raw_bytes(
-                    Direction::Tx,
-                    FrameLabel::UTestAct,
-                    "TESTFR ACT (t3 触发心跳)",
-                    f.to_vec(),
-                ));
-            }
+            log_tx_control_frame(log_collector, FrameLabel::UTestAct, &f, "TESTFR ACT (t3 触发心跳)".to_string());
             true
         }
         TickAction::Idle => true,
+    }
+}
+
+const TESTFR_ACT: [u8; 6] = [0x68, 0x04, 0x43, 0x00, 0x00, 0x00];
+const TESTFR_CON: [u8; 6] = [0x68, 0x04, 0x83, 0x00, 0x00, 0x00];
+
+fn build_s_frame(rsn: u16) -> [u8; 6] {
+    let rsn_bytes = (rsn << 1).to_le_bytes();
+    [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]]
+}
+
+fn log_tx_control_frame(
+    log_collector: &Option<Arc<LogCollector>>,
+    label: FrameLabel,
+    frame: &[u8],
+    detail: String,
+) {
+    if let Some(lc) = log_collector {
+        lc.try_add(LogEntry::with_raw_bytes(Direction::Tx, label, detail, frame.to_vec()));
     }
 }
 
@@ -1545,108 +1537,72 @@ fn process_received_frame<W: RawWrite>(
     let ctrl1 = data[2];
     let now = std::time::Instant::now();
 
-    // Any received frame counts as link liveness: refresh the t3 idle
-    // baseline and clear any in-flight TESTFR deadline. Even an unrelated
-    // I-frame proves the peer is alive, so the watchdog should not fire.
+    // Hold the lock once for the whole frame so we don't re-acquire 3-4
+    // times back-to-back on the I-frame hot path. All decisions about
+    // protocol-state mutation are made here; I/O happens after the drop.
+    let mut freed_acks = 0usize;
+    let mut force_ack: Option<u16> = None;
     {
         let mut s = protocol.lock().unwrap();
         s.last_rx = now;
         s.test_pending_deadline = None;
-    }
 
-    // U-frame
-    if ctrl1 & 0x03 == 0x03 {
-        log_frame(data, log_collector);
-        if ctrl1 == 0x43 {
-            // TESTFR ACT → reply with TESTFR CON
-            let response = [0x68, 0x04, 0x83, 0x00, 0x00, 0x00];
-            let _ = writer.write_raw(&response);
-        } else if ctrl1 == 0x83 {
-            // TESTFR CON — clear the in-flight TESTFR deadline.
-            let mut s = protocol.lock().unwrap();
-            s.test_pending_deadline = None;
-        }
-        // Other U-frames (STARTDT_CON 0x0B, STOPDT_CON 0x23) — nothing to track.
-    }
-    // S-frame
-    else if ctrl1 & 0x01 == 0x01 {
-        log_frame(data, log_collector);
-        if data.len() >= 6 {
+        if ctrl1 & 0x03 == 0x03 {
+            // U-frame: nothing extra to update beyond the liveness fields above.
+        } else if ctrl1 & 0x01 == 0x01 {
+            // S-frame piggybacks an RSN.
             let peer_rsn = u16::from_le_bytes([data[4], data[5]]) >> 1;
-            free_acked_pending(protocol, peer_rsn, ack_notify);
-        }
-    }
-    // I-frame
-    else if ctrl1 & 0x01 == 0 && data.len() >= 12 {
-        // Parse peer's SSN (data[2..4] >> 1) and the piggybacked RSN
-        // (data[4..6] >> 1) before consuming the ASDU.
-        let peer_ssn = u16::from_le_bytes([data[2], data[3]]) >> 1;
-        let peer_rsn = u16::from_le_bytes([data[4], data[5]]) >> 1;
-        free_acked_pending(protocol, peer_rsn, ack_notify);
-
-        // Update local rsn, increment unacked_received, and decide if w
-        // forces an immediate S-frame ACK.
-        let force_ack: Option<u16> = {
-            let mut s = protocol.lock().unwrap();
-            // V(R) <- N(S) + 1 per IEC 60870-5-104. If the peer's SSN
-            // doesn't match V(R) we still advance — log for diagnostics
-            // but don't hard-fail (some non-conformant slaves restart).
+            freed_acks = drain_acked(&mut s.pending_acks, peer_rsn);
+        } else if data.len() >= 12 {
+            // I-frame.
+            let peer_ssn = u16::from_le_bytes([data[2], data[3]]) >> 1;
+            let peer_rsn = u16::from_le_bytes([data[4], data[5]]) >> 1;
+            freed_acks = drain_acked(&mut s.pending_acks, peer_rsn);
+            // V(R) ← N(S)+1. Non-conformant slaves sometimes skip — accept anyway.
             s.rsn = seq_inc(peer_ssn);
             s.unacked_received = s.unacked_received.saturating_add(1);
             if s.unacked_received >= s.w {
-                let rsn = s.rsn;
+                force_ack = Some(s.rsn);
                 s.unacked_received = 0;
                 s.pending_ack_deadline = None;
-                Some(rsn)
-            } else {
-                if s.pending_ack_deadline.is_none() {
-                    s.pending_ack_deadline = Some(now + s.t2);
-                }
-                None
+            } else if s.pending_ack_deadline.is_none() {
+                s.pending_ack_deadline = Some(now + s.t2);
             }
-        };
+        }
+    }
+    if freed_acks > 0 {
+        ack_notify.notify_waiters();
+    }
 
+    if ctrl1 & 0x03 == 0x03 {
+        log_frame(data, log_collector);
+        if ctrl1 == 0x43 {
+            let _ = writer.write_raw(&TESTFR_CON);
+        }
+    } else if ctrl1 & 0x01 == 0x01 {
+        log_frame(data, log_collector);
+    } else if data.len() >= 12 {
         parse_and_store_asdu(data, received_data, log_collector, control_tx);
-
         if let Some(rsn) = force_ack {
-            let rsn_bytes = (rsn << 1).to_le_bytes();
-            let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
+            let s_frame = build_s_frame(rsn);
             let _ = writer.write_raw(&s_frame);
-            if let Some(ref lc) = log_collector {
-                lc.try_add(LogEntry::with_raw_bytes(
-                    Direction::Tx,
-                    FrameLabel::SFrame,
-                    format!("S 帧 (w 阈值触发) RSN={}", rsn),
-                    s_frame.to_vec(),
-                ));
-            }
+            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, format!("S 帧 (w 阈值触发) RSN={}", rsn));
         }
     }
 }
 
-/// Pop pending I-frame entries acknowledged by `peer_rsn` (anything with
-/// SSN < peer_rsn modulo 2^15). Notifies senders if any slot was freed.
-fn free_acked_pending(
-    protocol: &Arc<std::sync::Mutex<ProtocolState>>,
-    peer_rsn: u16,
-    ack_notify: &Arc<tokio::sync::Notify>,
-) {
-    let freed = {
-        let mut s = protocol.lock().unwrap();
-        let mut count = 0;
-        while let Some(&(ssn, _)) = s.pending_acks.front() {
-            if seq_lt(ssn, peer_rsn) {
-                s.pending_acks.pop_front();
-                count += 1;
-            } else {
-                break;
-            }
+/// Pop entries with SSN < peer_rsn (mod 2^15). Returns the count freed.
+fn drain_acked(pending_acks: &mut std::collections::VecDeque<u16>, peer_rsn: u16) -> usize {
+    let mut count = 0;
+    while let Some(&ssn) = pending_acks.front() {
+        if seq_lt(ssn, peer_rsn) {
+            pending_acks.pop_front();
+            count += 1;
+        } else {
+            break;
         }
-        count
-    };
-    if freed > 0 {
-        ack_notify.notify_waiters();
     }
+    count
 }
 
 /// Log a received U-frame.

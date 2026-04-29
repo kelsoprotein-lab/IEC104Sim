@@ -105,21 +105,22 @@ async fn test_double_command_writeback() {
     master.send_interrogation(1).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
-    // IOA=3 is the first DoublePoint (2 SP + first DP), QU=0, COT=6
-    master.send_double_command(3, 2, false, 1, 0, 6).await.unwrap();
+    // IOA=1 has every ASDU type (with_default_points shares IOA 1..=N across all types).
+    // QU=0, COT=6
+    master.send_double_command(1, 2, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
     {
         let stations = slave.stations.read().await;
-        let point = stations.get(&1).unwrap().data_points.get(3, AsduTypeId::MDpNa1).unwrap();
+        let point = stations.get(&1).unwrap().data_points.get(1, AsduTypeId::MDpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::DoublePoint { value: 2 },
-            "Slave DP IOA=3 should be 2");
+            "Slave DP IOA=1 should be 2");
     }
 
     {
         let data = master.received_data.read().await;
         let map = data.ca_map(1).expect("CA=1 map should exist");
-        let point = map.get(3, AsduTypeId::MDpNa1).unwrap();
+        let point = map.get(1, AsduTypeId::MDpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::DoublePoint { value: 2 },
             "Master should see DP=2 via writeback");
     }
@@ -158,13 +159,13 @@ async fn test_setpoint_float_writeback() {
     master.send_interrogation(1).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
-    // IOA=13 is the first ShortFloat, QL=0, COT=6
-    master.send_setpoint_float(13, 42.5, false, 1, 0, 6).await.unwrap();
+    // IOA=1 has every ASDU type, including M_ME_NC_1. QL=0, COT=6
+    master.send_setpoint_float(1, 42.5, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
     {
         let stations = slave.stations.read().await;
-        let point = stations.get(&1).unwrap().data_points.get(13, AsduTypeId::MMeNc1).unwrap();
+        let point = stations.get(&1).unwrap().data_points.get(1, AsduTypeId::MMeNc1).unwrap();
         assert_eq!(point.value, DataPointValue::ShortFloat { value: 42.5 },
             "Slave float should be 42.5");
     }
@@ -172,7 +173,7 @@ async fn test_setpoint_float_writeback() {
     {
         let data = master.received_data.read().await;
         let map = data.ca_map(1).expect("CA=1 map should exist");
-        let point = map.get(13, AsduTypeId::MMeNc1).unwrap();
+        let point = map.get(1, AsduTypeId::MMeNc1).unwrap();
         assert_eq!(point.value, DataPointValue::ShortFloat { value: 42.5 },
             "Master should see float=42.5 via writeback");
     }

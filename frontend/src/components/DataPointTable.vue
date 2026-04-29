@@ -12,7 +12,7 @@ const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 const emit = defineEmits<{
-  (e: 'point-select', points: { ioa: number; value: string }[]): void
+  (e: 'point-select', points: { ioa: number; asdu_type: string; value: string }[]): void
 }>()
 
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
@@ -70,7 +70,8 @@ function markChanged(ioa: number) {
   }, 3000))
 }
 
-// === Load data points: merge into existing map, never replace ===
+// 用后端返回的完整列表替换 dataMap，避免删除/重建 server 等场景下
+// 旧条目残留累加（前端 server_id 复用时 watcher 不触发 reset）。
 async function loadDataPoints() {
   if (!selectedServerId.value || selectedCA.value === null) return
   try {
@@ -78,14 +79,16 @@ async function loadDataPoints() {
       serverId: selectedServerId.value,
       commonAddress: selectedCA.value,
     })
+    const fresh = new Map<string, DataPointInfo>()
     for (const p of points) {
       const key = pointKey(p.ioa, p.asdu_type)
       const old = dataMap.get(key)
       if (!old || old.value !== p.value) {
         markChanged(p.ioa)
       }
-      dataMap.set(key, p)
+      fresh.set(key, p)
     }
+    dataMap = fresh
     updateDisplay()
   } catch (e) {
     console.error('Failed to load data points:', e)
@@ -130,6 +133,11 @@ watch(dataRefreshKey, () => {
   }
 })
 
+// 切换站 / 分类时清空搜索框，避免上一次的关键字残留把新视图过滤成空集
+watch([selectedServerId, selectedCA, selectedCategory], () => {
+  searchQuery.value = ''
+})
+
 // === Auto-polling: refresh data points every 2s to pick up control command changes ===
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -156,11 +164,29 @@ onUnmounted(() => {
   for (const t of changeTimers.values()) clearTimeout(t)
 })
 
+// 按 asdu_type 前缀判分类，对 reactivity / HMR 错位下后端 category 字段
+// 失配也能稳定工作；时标版本 (Tx) 与不带时标 (Nx) 归同一分类。
+const CATEGORY_TYPE_PREFIXES: Record<string, string[]> = {
+  '单点 (SP)': ['M_SP_'],
+  '双点 (DP)': ['M_DP_'],
+  '步位置 (ST)': ['M_ST_'],
+  '位串 (BO)': ['M_BO_'],
+  '归一化 (ME_NA)': ['M_ME_NA_', 'M_ME_TD_'],
+  '标度化 (ME_NB)': ['M_ME_NB_', 'M_ME_TE_'],
+  '浮点 (ME_NC)': ['M_ME_NC_', 'M_ME_TF_'],
+  '累计量 (IT)': ['M_IT_'],
+}
+
 // === Filtered points ===
 const filteredPoints = computed(() => {
   let pts = displayPoints.value
   if (selectedCategory.value) {
-    pts = pts.filter(p => p.category === selectedCategory.value)
+    const prefixes = CATEGORY_TYPE_PREFIXES[selectedCategory.value]
+    if (prefixes?.length) {
+      pts = pts.filter(p => prefixes.some(pre => p.asdu_type.startsWith(pre)))
+    } else {
+      pts = pts.filter(p => p.category === selectedCategory.value)
+    }
   }
   const q = searchQuery.value.trim()
   if (!q) return pts
@@ -220,8 +246,11 @@ function selectRow(e: MouseEvent, point: DataPointInfo) {
 }
 
 function emitSelection() {
+  // 同 IOA 上挂着多种 ASDU 类型 (NA + TB), 必须把 asdu_type 一并传给上层,
+  // 否则 ValuePanel 无法定位到准确的那一行。
   const points = selectedRows.value.map(r => ({
     ioa: r.ioa,
+    asdu_type: r.asdu_type,
     value: r.value,
   }))
   emit('point-select', points)

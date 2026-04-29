@@ -10,8 +10,7 @@ const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
 const selectedCA = inject<Ref<number | null>>('selectedCA')!
-const selectedPoints = inject<Ref<{ ioa: number; value: string }[]>>('selectedPoints')!
-const refreshData = inject<() => void>('refreshData')!
+const selectedPoints = inject<Ref<{ ioa: number; asdu_type: string; value: string }[]>>('selectedPoints')!
 
 const hasSelection = computed(() => selectedPoints.value.length > 0)
 const isSingle = computed(() => selectedPoints.value.length === 1)
@@ -32,7 +31,9 @@ watch(
         serverId,
         commonAddress: ca,
       })
-      pointDetail.value = allPoints.find(p => p.ioa === points[0].ioa) ?? null
+      pointDetail.value = allPoints.find(
+        p => p.ioa === points[0].ioa && p.asdu_type === points[0].asdu_type,
+      ) ?? null
     } catch {
       pointDetail.value = null
     }
@@ -69,7 +70,12 @@ async function writeValue() {
       asduType: pointDetail.value?.asdu_type ?? '',
       value: editValue.value,
     })
-    refreshData()
+    // 不立即 refreshData：list_data_points 在大数据点场景下耗时数百 ms，
+    // 立即触发会卡 UI；2s polling 自然跟上即可。本面板的 pointDetail
+    // 也通过下一次 polling 重读。
+    if (pointDetail.value) {
+      pointDetail.value = { ...pointDetail.value, value: editValue.value }
+    }
   } catch (e) {
     await showAlert(String(e))
   }
@@ -164,7 +170,7 @@ function handleEditKeydown(e: KeyboardEvent) {
             <span class="detail-value">{{ selectedPoints.length }} {{ t('table.countSuffix') }}</span>
           </div>
           <div class="ioa-list">
-            <span v-for="p in selectedPoints" :key="p.ioa" class="ioa-chip">
+            <span v-for="p in selectedPoints" :key="`${p.ioa}-${p.asdu_type}`" class="ioa-chip">
               {{ p.ioa }}
             </span>
           </div>

@@ -2,6 +2,54 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-04-29
+
+### Highlights / 亮点
+
+- 🧰 **子站完整开箱体验大整顿** / Slave UX overhaul — 新建服务器对话框现在直接暴露"每类点数"输入,默认 10 即开即用;站点初始化默认覆盖全部 16 个监视方向 ASDU 类型(NA + 带时标 TB/TD/TE/TF 全套),不同类型可以挂在同一段 IOA 1..N 上,这才是 IEC 104 真实工程现场的样子 / The new-server dialog now exposes a "points per category" input (default 10), and the default station seeds all 16 monitor-direction ASDU types — both untimestamped (NA) and timestamped (TB/TD/TE/TF) variants share the same IOA range 1..N, mirroring how a real RTU lays out a single physical point with multiple report formats.
+- 🚦 **启动/停止按钮终于不"撒谎"了** / Toolbar buttons no longer lie about server state — 之前从工具栏点"启动",右键菜单点"停止",或者后端因错误自动停服时,工具栏 disabled 状态会和真实状态脱节(看起来还能再启动一次)。现在前端订阅了后端的 `server-state-changed` 事件,所有渠道触发的状态变化都会立即同步 / Front-end now subscribes to the backend's `server-state-changed` event, so the toolbar's enable/disable state stays in lockstep with whatever happened — toolbar click, tree right-click, or auto-stop on error.
+- ⚡ **写值不再卡顿,日志不再"频闪"** / No more write-value lag, no more flickering log — 在 32 万级数据点的极端站点下,改一个值后立即触发的全量轮询(`list_data_points`)会让 UI 卡几百毫秒;通信日志每 2 秒整体替换 ref 也让 deep-reactive 重建几千个 LogEntry。两条都修了:写值采用乐观更新,日志改 `shallowRef` + 倒序 + 增量检测 / Write-value used to fire an immediate full-list refresh, blocking the UI for hundreds of ms when the station held 320k+ points. Now the panel updates optimistically and lets the 2 s poll catch up. The communication log moved to `shallowRef` with a reverse-order computed view and a tail-timestamp diff so polling no longer rebuilds thousands of `LogEntry` proxies on each tick.
+- 🔍 **写值终于写到正确的点了** / Write hits the right point now — 同 IOA 上挂着多种 ASDU 类型(NA + TB)后,旧版本 ValuePanel 用 `find(p => p.ioa === ...)` 找点,可能命中位串而你想写浮点 → 报"unsupported value type"。现在选中行的 `asdu_type` 跟着上行,写值精准锁定 / `selectedPoints` now carries `asdu_type` end-to-end, so picking a row labelled `M_ME_NC_1` will not accidentally route the write to the bitstring at the same IOA.
+- 🎨 **子站标题瘦身、ASDU 选项补齐** / Slimmer title, fuller dropdowns — 子站窗口标题从冗长的 "IEC104Slave - IEC 60870-5-104 Simulator" 收缩到一句话 "IEC104Slave";批量/单点添加对话框的 ASDU 类型从 8 个补全到 16 个(8 个不带时标 + 8 个带时标),后端 `parse_asdu_type` 同步接受三种命名风格(`MMeNa1` / `m_me_na_1` / `M_ME_NA_1`),不再因输入大小写不一致就报 "unknown ASDU type" / Slave window title is just "IEC104Slave"; both add-point dialogs now list all 16 monitor-direction ASDU variants; backend `parse_asdu_type` accepts PascalCase, snake_case, and the upper-snake display name interchangeably.
+- 📡 **突发上送终于会写日志了** / Spontaneous tx now shows up in the log — 子站手动改值或随机变化触发的 COT=3 帧之前默默发到 socket 上,通信日志里看不到。现在每次入队都会记一行 `tx I 突发上送 (COT=3) IOA={} CA={} → N 个客户端`,排查"是不是真的发出去了"再也不用 Wireshark / Manually tweaking a value (or random mutation) used to silently push COT=3 frames to the socket — invisible in the in-app log. Every batch now logs `tx I Spontaneous (COT=3) IOA={} CA={} → N clients`.
+
+### Added 新增
+
+- **子站后端**: `Station::with_default_points` 改为 16 个 ASDU 类型共享 IOA `1..=N`;`(IOA, AsduTypeId)` 组合在 HashMap 里一直支持共存,这次让默认初始化也用上了 / `Station::with_default_points` rewritten to seed 16 ASDU types sharing IOA `1..=N`; `(IOA, AsduTypeId)` coexistence was already supported by the HashMap key — this finally exercises it.
+- **子站后端**: `CreateServerRequest` 新增 `count_per_category: Option<u32>` 字段,`create_server` 据此构造默认 station(缺省 10);旧请求向后兼容 / `CreateServerRequest` gains `count_per_category: Option<u32>` (default 10); old requests stay compatible.
+- **子站后端**: `data_point.rs` 新增 `preferred_na_for(category)` helper,让 `get_by_category` / `get_mut_by_category` 在同 IOA 多类型时优先返回 NA 变体,控制命令的写入目标稳定 / New `preferred_na_for(category)` helper makes the by-category lookups deterministic — they prefer the NA variant so control commands always write the untimestamped twin.
+- **子站后端**: `queue_spontaneous` 现在写 `LogEntry`,Direction=Tx,detail 含 IOA + ASDU 类型 + 客户端数 / `queue_spontaneous` now writes a `LogEntry` with the IOA, ASDU type, and per-client fan-out count.
+- **子站前端**: 新建服务器对话框新增"每类点数 / Points per category"数字输入,clamp `[0, 65534]` / "Points per category" number input added to the new-server dialog, clamped to `[0, 65534]`.
+- **子站前端**: `BatchAddModal` / `DataPointModal` 加入 8 个带时标 ASDU 类型选项(M_SP_TB_1, M_DP_TB_1, M_ST_TB_1, M_BO_TB_1, M_ME_TD_1, M_ME_TE_1, M_ME_TF_1, M_IT_TB_1),i18n 同步加 zh/en 描述 / Both add-point modals expose all 8 timestamped variants alongside the existing 8 untimestamped types; zh/en labels added.
+- **子站前端**: 新增 `frontend/src/constants/asduTypes.ts` 共享 16 项清单,两个 modal 共用,改清单一处生效 / New `frontend/src/constants/asduTypes.ts` holds the canonical 16-entry list; both modals consume it.
+- **子站前端**: `App.vue` `onMounted` 订阅 `server-state-changed`,`onUnmounted` 清理 listener / Front-end subscribes to `server-state-changed` and tears down the listener on unmount.
+
+### Changed 改进
+
+- **子站前端**: `LogPanel.vue` `logs` 从 `ref<LogEntry[]>` 改 `shallowRef`;新增 `displayLogs = computed(() => logs.slice().reverse())` 让最新条在顶;`loadLogs` 比对 `length` + 末条 `timestamp`,无变化不替换,polling 静默时不重渲染 / `LogPanel.vue` swaps to `shallowRef` + reverse-order computed view; `loadLogs` skips the swap when both length and tail timestamp are unchanged.
+- **子站前端**: `DataPointTable.vue` 选行 emit 携带 `asdu_type`;`emitSelection` payload 从 `{ioa, value}` 升级到 `{ioa, asdu_type, value}`;`App.vue` 与 `ValuePanel.vue` 类型同步 / `DataPointTable.vue` now emits `{ioa, asdu_type, value}` so downstream consumers can disambiguate same-IOA-different-type rows.
+- **子站前端**: `ValuePanel.vue` 写值后改为乐观更新当前 `pointDetail`,不再调 `refreshData()` 触发全量轮询;查找点也用 `(ioa, asdu_type)` 双键定位 / `ValuePanel.vue` writes optimistically and no longer triggers a full re-poll; lookup uses the `(ioa, asdu_type)` composite key.
+- **子站前端**: 多选 chip `:key` 从 `p.ioa` 改 `${p.ioa}-${p.asdu_type}`,避免同 IOA 多 ASDU 类型 key 冲突 / Multi-select chip `:key` upgraded to a composite to handle same-IOA-multi-type selections.
+- **子站后端**: `parse_asdu_type` 用 `chars().filter(is_alphanumeric).flat_map(to_lowercase)` 归一化输入,16 类型在小写无分隔符的查找表里匹配,接受 `MSpNa1` / `m_sp_na_1` / `M_SP_NA_1` 三种来源 / `parse_asdu_type` normalises input by stripping non-alphanumerics and lowercasing, then looks up against a 16-entry table — accepts PascalCase, snake_case, and upper-snake display names.
+- **子站窗口**: `tauri.conf.json` 标题字符串简化为 `"IEC104Slave"` / `tauri.conf.json` window title slimmed to `"IEC104Slave"`.
+- **测试**: `slave::tests::test_station_with_default_points` 断言更新为 16 类型 × N IOA = 16N 条点;`control_e2e` 中假设 IOA=3 是首个 DP 的 case 改用 IOA=1(全类共享段后所有类型都从 IOA 1 起) / `test_station_with_default_points` asserts 16N points; `control_e2e` cases updated to use IOA=1 (every type starts from IOA 1 under the shared-range model).
+
+### Fixed 修复
+
+- **子站**: 同 IOA 上 NA + TB 共存时,旧 `get_by_category` 用 `HashMap::values().find()` 顺序不确定,可能把 control 命令写到带时标点上,而读取时去拿不带时标点 → 状态错位。新代码优先返回 NA,写读一致 / Same-IOA NA+TB coexistence used to break control writes — `HashMap::values().find()` order is undefined, so the command might land on the TB twin while reads go to the NA one. The new "prefer NA" lookup keeps writes and reads consistent.
+- **子站**: ValuePanel 选浮点 `M_ME_NC_1` 写值,实际可能命中同 IOA 的 `M_BO_NA_1`(位串),解析"321"为位串失败 → 报 "unsupported value type"。`asdu_type` 全程透传后修复 / Selecting `M_ME_NC_1` no longer accidentally routes the write to a same-IOA `M_BO_NA_1` and dies with "unsupported value type".
+- **子站**: 工具栏"启动"按钮在树右键启停或后端自动停服后不刷新,看起来仍可启动 / Toolbar's start/stop buttons no longer drift out of sync after off-toolbar state changes.
+- **子站**: 修改值后 UI 卡顿(32 万点站点下因立即触发 `list_data_points` 全量序列化) / Write-value lag eliminated for stations with hundreds of thousands of points — full-list refresh on write removed.
+- **子站**: 通信日志面板每 2 秒整体闪烁(deep-reactive 全量重建) / Communication log no longer flickers every 2 s.
+- **子站**: 突发上送 (COT=3) 缺日志,排查只能靠抓包 / Spontaneous (COT=3) frames now visible in the in-app log.
+- **子站**: 数据表 dataMap 在 server_id 复用场景(dev 重启 + 前端 server_id 仍为 `server_1`)下累加旧条目 → categoryCounts 显示巨量伪点。`loadDataPoints` 改为以后端返回为准的 fresh map 替换 / `loadDataPoints` rebuilds `dataMap` from scratch on every poll, so dev hot-restart server_id reuse no longer accretes phantom points.
+
+### Internal 内部
+
+- **子站后端**: `slave.rs:queue_spontaneous` 在写日志前累计 `total_sent` 计数避免 0 客户端时也打日志 / `queue_spontaneous` only logs when at least one client received the batch.
+- **子站前端**: `App.vue` 的 listener 类型签名 `listen<{ id: string; state: string }>('server-state-changed', ...)` 与后端 `ServerStateEvent`(`#[serde(rename_all = "snake_case")]`) 字段对齐 / Front-end listener signature aligns with backend `ServerStateEvent` snake_case payload.
+- **子站前端**: `ValuePanel.vue` 删除未使用的 `refreshData` inject / Removed dead `refreshData` inject in `ValuePanel.vue`.
+
 ## [1.2.0] - 2026-04-29
 
 ### Highlights / 亮点

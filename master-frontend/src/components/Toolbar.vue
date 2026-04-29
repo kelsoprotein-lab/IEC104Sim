@@ -269,6 +269,16 @@ async function getConnCAs(): Promise<number[]> {
   return [conn?.common_address ?? 1]
 }
 
+// Fan out a per-CA invocation across all CAs of the current connection
+// concurrently. Backend serializes I-frame writes via send_lock, but
+// running the IPC round-trips in parallel still saves a 3×CA latency multiplier.
+async function fanOutCAs(cmd: string): Promise<void> {
+  const cas = await getConnCAs()
+  await Promise.all(
+    cas.map((ca) => invoke(cmd, { id: selectedConnectionId.value, commonAddress: ca })),
+  )
+}
+
 async function connectMaster() {
   if (!selectedConnectionId.value) return
   try {
@@ -276,13 +286,7 @@ async function connectMaster() {
     selectedConnectionState.value = 'Connected'
     refreshTree()
     try {
-      const cas = await getConnCAs()
-      for (const ca of cas) {
-        await invoke('send_interrogation', {
-          id: selectedConnectionId.value,
-          commonAddress: ca,
-        })
-      }
+      await fanOutCAs('send_interrogation')
       refreshData()
       setTimeout(() => refreshTree(), 3000)
     } catch (e) {
@@ -331,15 +335,8 @@ async function deleteMaster() {
 async function sendGI() {
   if (!selectedConnectionId.value) return
   try {
-    const cas = await getConnCAs()
-    for (const ca of cas) {
-      await invoke('send_interrogation', {
-        id: selectedConnectionId.value,
-        commonAddress: ca,
-      })
-    }
+    await fanOutCAs('send_interrogation')
     refreshData()
-    // Delayed tree refresh to update category counts after data arrives
     setTimeout(() => refreshTree(), 3000)
   } catch (e) {
     await showAlert(String(e))
@@ -349,13 +346,7 @@ async function sendGI() {
 async function sendClockSync() {
   if (!selectedConnectionId.value) return
   try {
-    const cas = await getConnCAs()
-    for (const ca of cas) {
-      await invoke('send_clock_sync', {
-        id: selectedConnectionId.value,
-        commonAddress: ca,
-      })
-    }
+    await fanOutCAs('send_clock_sync')
   } catch (e) {
     await showAlert(String(e))
   }
@@ -364,13 +355,7 @@ async function sendClockSync() {
 async function sendCounterRead() {
   if (!selectedConnectionId.value) return
   try {
-    const cas = await getConnCAs()
-    for (const ca of cas) {
-      await invoke('send_counter_read', {
-        id: selectedConnectionId.value,
-        commonAddress: ca,
-      })
-    }
+    await fanOutCAs('send_counter_read')
     refreshData()
     setTimeout(() => refreshTree(), 3000)
   } catch (e) {
@@ -380,6 +365,30 @@ async function sendCounterRead() {
 
 const isConnected = () => selectedConnectionState.value === 'Connected'
 const hasConnection = () => selectedConnectionId.value !== null
+
+// IEC 60870-5-104 protocol-parameter form fields. Drives the proto-grid
+// in the new-connection dialog so the 10 inputs stay consistent.
+type ProtoFieldKey =
+  | 't0' | 't1' | 't2' | 't3' | 'k' | 'w'
+  | 'default_qoi' | 'default_qcc'
+  | 'interrogate_period_s' | 'counter_interrogate_period_s'
+type ProtoField = { key: ProtoFieldKey; label: string; min: number; max?: number; unit?: 'sec' }
+const protoFields: ProtoField[] = [
+  { key: 't0', label: 't0', unit: 'sec', min: 1, max: 255 },
+  { key: 't1', label: 't1', unit: 'sec', min: 1, max: 255 },
+  { key: 't2', label: 't2', unit: 'sec', min: 1, max: 255 },
+  { key: 't3', label: 't3', unit: 'sec', min: 1, max: 255 },
+  { key: 'k', label: 'k', min: 1, max: 32767 },
+  { key: 'w', label: 'w', min: 1, max: 32767 },
+  { key: 'default_qoi', label: 'newConn.defaultQoi', min: 0, max: 255 },
+  { key: 'default_qcc', label: 'newConn.defaultQcc', min: 0, max: 255 },
+  { key: 'interrogate_period_s', label: 'newConn.interrogatePeriod', min: 0 },
+  { key: 'counter_interrogate_period_s', label: 'newConn.counterInterrogatePeriod', min: 0 },
+]
+function protoLabel(f: ProtoField): string {
+  const base = f.label.includes('.') ? t(f.label) : f.label
+  return f.unit === 'sec' ? `${base} (${t('newConn.unitSeconds')})` : base
+}
 </script>
 
 <template>
@@ -477,45 +486,15 @@ const hasConnection = () => selectedConnectionId.value !== null
           <details class="proto-section">
             <summary class="proto-summary">{{ t('newConn.protocolParams') }}</summary>
             <div class="proto-grid">
-              <label class="form-label">
-                <span>t0 ({{ t('newConn.unitSeconds') }})</span>
-                <input v-model.number="newConnForm.t0" class="form-input" type="number" min="1" max="255" />
-              </label>
-              <label class="form-label">
-                <span>t1 ({{ t('newConn.unitSeconds') }})</span>
-                <input v-model.number="newConnForm.t1" class="form-input" type="number" min="1" max="255" />
-              </label>
-              <label class="form-label">
-                <span>t2 ({{ t('newConn.unitSeconds') }})</span>
-                <input v-model.number="newConnForm.t2" class="form-input" type="number" min="1" max="255" />
-              </label>
-              <label class="form-label">
-                <span>t3 ({{ t('newConn.unitSeconds') }})</span>
-                <input v-model.number="newConnForm.t3" class="form-input" type="number" min="1" max="255" />
-              </label>
-              <label class="form-label">
-                <span>k</span>
-                <input v-model.number="newConnForm.k" class="form-input" type="number" min="1" max="32767" />
-              </label>
-              <label class="form-label">
-                <span>w</span>
-                <input v-model.number="newConnForm.w" class="form-input" type="number" min="1" max="32767" />
-              </label>
-              <label class="form-label">
-                <span>{{ t('newConn.defaultQoi') }}</span>
-                <input v-model.number="newConnForm.default_qoi" class="form-input" type="number" min="0" max="255" />
-              </label>
-              <label class="form-label">
-                <span>{{ t('newConn.defaultQcc') }}</span>
-                <input v-model.number="newConnForm.default_qcc" class="form-input" type="number" min="0" max="255" />
-              </label>
-              <label class="form-label">
-                <span>{{ t('newConn.interrogatePeriod') }}</span>
-                <input v-model.number="newConnForm.interrogate_period_s" class="form-input" type="number" min="0" />
-              </label>
-              <label class="form-label">
-                <span>{{ t('newConn.counterInterrogatePeriod') }}</span>
-                <input v-model.number="newConnForm.counter_interrogate_period_s" class="form-input" type="number" min="0" />
+              <label v-for="f in protoFields" :key="f.key" class="form-label">
+                <span>{{ protoLabel(f) }}</span>
+                <input
+                  v-model.number="newConnForm[f.key]"
+                  class="form-input"
+                  type="number"
+                  :min="f.min"
+                  :max="f.max"
+                />
               </label>
             </div>
             <div class="form-hint">{{ t('newConn.protocolParamsHint') }}</div>

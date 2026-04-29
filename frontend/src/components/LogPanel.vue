@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, watch, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, shallowRef, computed, inject, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry } from '../types'
 import { useI18n } from '../i18n'
@@ -17,7 +17,11 @@ const emit = defineEmits<{
 
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
 
-const logs = ref<LogEntry[]>([])
+// shallowRef: 日志条目可达数千行，deep ref 在每次 invoke 全替换时
+// 会重建所有 Proxy，触发 v-for diff 全量重渲染（视觉上一闪一闪）。
+const logs = shallowRef<LogEntry[]>([])
+// 倒序：最新条目浮到顶部，与主站 LogPanel 行为对齐。
+const displayLogs = computed(() => logs.value.slice().reverse())
 const isLoading = ref(false)
 const error = ref<string | null>(null)
 let refreshTimer: number | null = null
@@ -29,9 +33,17 @@ async function loadLogs() {
   }
   isLoading.value = true
   try {
-    logs.value = await invoke<LogEntry[]>('get_communication_logs', {
+    const next = await invoke<LogEntry[]>('get_communication_logs', {
       serverId: selectedServerId.value,
     })
+    // 仅在确有新条目时替换 ref，避免 polling 时无变化也触发表格 v-for diff
+    const prev = logs.value
+    const sameLen = prev.length === next.length
+    const sameTail = sameLen && prev.length > 0
+      && prev[prev.length - 1].timestamp === next[next.length - 1].timestamp
+    if (!sameLen || !sameTail) {
+      logs.value = next
+    }
   } catch (e) {
     error.value = String(e)
   }
@@ -176,7 +188,7 @@ onUnmounted(() => stopAutoRefresh())
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, idx) in logs" :key="idx">
+          <tr v-for="(log, idx) in displayLogs" :key="idx">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', log.direction.toLowerCase()]">{{ log.direction }}</td>
             <td class="col-frame">{{ formatFrameLabel(log.frame_label) }}</td>

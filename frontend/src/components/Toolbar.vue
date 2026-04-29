@@ -24,6 +24,7 @@ const { showAlert, showPrompt } = inject<{
 const showNewServerModal = ref(false)
 const newServerPort = ref('2404')
 const newServerInitMode = ref('zero')
+const newServerCount = ref(10)
 const newServerUseTls = ref(false)
 const newServerCertFile = ref('')
 const newServerKeyFile = ref('')
@@ -33,6 +34,7 @@ const newServerRequireClientCert = ref(false)
 function openNewServerModal() {
   newServerPort.value = '2404'
   newServerInitMode.value = 'zero'
+  newServerCount.value = 10
   newServerUseTls.value = false
   newServerCertFile.value = ''
   newServerKeyFile.value = ''
@@ -49,10 +51,14 @@ async function submitNewServer() {
   }
   showNewServerModal.value = false
   try {
+    const count = Number.isFinite(newServerCount.value) && newServerCount.value >= 0
+      ? Math.min(65534, Math.floor(newServerCount.value))
+      : 10
     const info = await invoke<{ id: string }>('create_server', {
       request: {
         port,
         init_mode: newServerInitMode.value,
+        count_per_category: count,
         use_tls: newServerUseTls.value || undefined,
         cert_file: newServerCertFile.value || undefined,
         key_file: newServerKeyFile.value || undefined,
@@ -312,6 +318,16 @@ watch([selectedServerId, selectedCA], () => {
               <input type="radio" v-model="newServerInitMode" value="random" /> {{ t('newServer.initRandom') }}
             </label>
           </div>
+        </div>
+        <div class="modal-field">
+          <label>{{ t('newServer.countPerCategory') }}</label>
+          <input
+            v-model.number="newServerCount"
+            type="number"
+            min="0"
+            max="65534"
+            @keyup.enter="submitNewServer"
+          />
         </div>
         <div class="modal-field">
           <label class="checkbox-label">

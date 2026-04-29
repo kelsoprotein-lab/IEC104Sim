@@ -113,24 +113,37 @@ impl Station {
 
     pub fn with_default_points(common_address: u16, name: impl Into<String>, count_per_category: u32) -> Self {
         let mut station = Self::new(common_address, name);
-        let mut ioa = 1u32;
-        let categories = [
+        // 16 个 ASDU 类型（8 物理分类 × NA + TB），全部共享同一段 IOA 1..=N。
+        // (ioa, asdu_type) 是数据点的复合主键，不同类型可以挂在同一 IOA 下。
+        let asdu_types: [(AsduTypeId, DataCategory); 16] = [
             (AsduTypeId::MSpNa1, DataCategory::SinglePoint),
+            (AsduTypeId::MSpTb1, DataCategory::SinglePoint),
             (AsduTypeId::MDpNa1, DataCategory::DoublePoint),
+            (AsduTypeId::MDpTb1, DataCategory::DoublePoint),
             (AsduTypeId::MStNa1, DataCategory::StepPosition),
+            (AsduTypeId::MStTb1, DataCategory::StepPosition),
             (AsduTypeId::MBoNa1, DataCategory::Bitstring),
+            (AsduTypeId::MBoTb1, DataCategory::Bitstring),
             (AsduTypeId::MMeNa1, DataCategory::NormalizedMeasured),
+            (AsduTypeId::MMeTd1, DataCategory::NormalizedMeasured),
             (AsduTypeId::MMeNb1, DataCategory::ScaledMeasured),
+            (AsduTypeId::MMeTe1, DataCategory::ScaledMeasured),
             (AsduTypeId::MMeNc1, DataCategory::FloatMeasured),
+            (AsduTypeId::MMeTf1, DataCategory::FloatMeasured),
             (AsduTypeId::MItNa1, DataCategory::IntegratedTotals),
+            (AsduTypeId::MItTb1, DataCategory::IntegratedTotals),
         ];
-        for (asdu_type, category) in &categories {
-            for _ in 0..count_per_category {
-                let def = InformationObjectDef { ioa, asdu_type: *asdu_type, category: *category, name: String::new(), comment: String::new() };
-                let point = DataPoint::new(ioa, *asdu_type);
-                station.data_points.insert(point);
-                station.object_defs.push(def);
-                ioa += 1;
+        for (asdu_type, category) in &asdu_types {
+            for i in 0..count_per_category {
+                let ioa = 1 + i;
+                station.data_points.insert(DataPoint::new(ioa, *asdu_type));
+                station.object_defs.push(InformationObjectDef {
+                    ioa,
+                    asdu_type: *asdu_type,
+                    category: *category,
+                    name: String::new(),
+                    comment: String::new(),
+                });
             }
         }
         station
@@ -320,6 +333,7 @@ impl SlaveServer {
         };
         let ca_bytes = station.common_address.to_le_bytes();
         let mut conns = self.connections.write().await;
+        let mut total_sent = 0usize;
         for (_addr, conn) in conns.iter_mut() {
             let mut batch = Vec::new();
             for &(ioa, asdu_type) in changed {
@@ -332,7 +346,23 @@ impl SlaveServer {
                 conn.last_sent.insert(ioa, point.value.display());
             }
             if !batch.is_empty() {
+                total_sent += 1;
                 conn.queue.lock().await.extend(batch);
+            }
+        }
+        if total_sent > 0 {
+            if let Some(ref lc) = self.log_collector {
+                let detail = if changed.len() == 1 {
+                    let (ioa, asdu_type) = changed[0];
+                    format!("突发上送 (COT=3) IOA={} {} CA={} → {} 个客户端", ioa, asdu_type.name(), common_address, total_sent)
+                } else {
+                    format!("突发上送 (COT=3) {} 个 IOA CA={} → {} 个客户端", changed.len(), common_address, total_sent)
+                };
+                let label = changed
+                    .first()
+                    .map(|(_, t)| FrameLabel::IFrame(t.name().to_string()))
+                    .unwrap_or_else(|| FrameLabel::IFrame(String::new()));
+                lc.try_add(LogEntry::new(Direction::Tx, label, detail));
             }
         }
     }
@@ -1617,7 +1647,20 @@ mod tests {
     #[test]
     fn test_station_with_default_points() {
         let s = Station::with_default_points(1, "站1", 10);
-        assert_eq!(s.data_points.len(), 80); // 8 categories * 10 points each
+        // 16 ASDU 类型 × 10 IOA = 160；所有类型共享 IOA 1..=10
+        assert_eq!(s.data_points.len(), 160);
+        // IOA=1 上同时挂着所有 16 种 ASDU 类型
+        assert!(s.data_points.get(1, AsduTypeId::MSpNa1).is_some());
+        assert!(s.data_points.get(1, AsduTypeId::MSpTb1).is_some());
+        assert!(s.data_points.get(1, AsduTypeId::MDpNa1).is_some());
+        assert!(s.data_points.get(1, AsduTypeId::MMeNc1).is_some());
+        assert!(s.data_points.get(1, AsduTypeId::MMeTf1).is_some());
+        assert!(s.data_points.get(1, AsduTypeId::MItTb1).is_some());
+        // 边界 IOA=10 也要存在
+        assert!(s.data_points.get(10, AsduTypeId::MSpNa1).is_some());
+        assert!(s.data_points.get(10, AsduTypeId::MItTb1).is_some());
+        // IOA=11 不应该存在（所有类型只到 10）
+        assert!(s.data_points.get(11, AsduTypeId::MSpNa1).is_none());
     }
 
     #[tokio::test]

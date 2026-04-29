@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import { useI18n } from '../i18n'
+import { ASDU_TYPE_OPTIONS } from '../constants/asduTypes'
 
 const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
@@ -20,16 +21,9 @@ const emit = defineEmits<{
   added: []
 }>()
 
-const ASDU_TYPES = computed(() => [
-  { value: 'MSpNa1', label: t('asduType.sp') },
-  { value: 'MDpNa1', label: t('asduType.dp') },
-  { value: 'MStNa1', label: t('asduType.st') },
-  { value: 'MBoNa1', label: t('asduType.bo') },
-  { value: 'MMeNa1', label: t('asduType.me_na') },
-  { value: 'MMeNb1', label: t('asduType.me_nb') },
-  { value: 'MMeNc1', label: t('asduType.me_nc') },
-  { value: 'MItNa1', label: t('asduType.it') },
-])
+const ASDU_TYPES = computed(() =>
+  ASDU_TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))
+)
 
 const startIoa = ref(0)
 const count = ref(10)

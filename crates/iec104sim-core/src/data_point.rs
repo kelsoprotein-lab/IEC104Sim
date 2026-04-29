@@ -147,13 +147,28 @@ impl DataPointMap {
         self.points.get_mut(&(ioa, asdu_type))
     }
 
-    /// Find any point at the given IOA whose category matches.
+    /// Find a point at the given IOA whose category matches. Prefers the
+    /// untimestamped variant (NA) so control commands have a stable target
+    /// when both NA and TB exist for the same IOA.
     pub fn get_by_category(&self, ioa: u32, category: DataCategory) -> Option<&DataPoint> {
+        let preferred = preferred_na_for(category);
+        if let Some(t) = preferred {
+            if let Some(p) = self.points.get(&(ioa, t)) {
+                return Some(p);
+            }
+        }
         self.points.values().find(|p| p.ioa == ioa && p.asdu_type.category() == category)
     }
 
-    /// Find any point (mutable) at the given IOA whose category matches.
+    /// Find a point (mutable) at the given IOA whose category matches.
+    /// Prefers the untimestamped variant (NA) — see `get_by_category`.
     pub fn get_mut_by_category(&mut self, ioa: u32, category: DataCategory) -> Option<&mut DataPoint> {
+        let preferred = preferred_na_for(category);
+        if let Some(t) = preferred {
+            if self.points.contains_key(&(ioa, t)) {
+                return self.points.get_mut(&(ioa, t));
+            }
+        }
         self.points.values_mut().find(|p| p.ioa == ioa && p.asdu_type.category() == category)
     }
 
@@ -207,6 +222,23 @@ impl DataPointMap {
         let mut pts: Vec<&DataPoint> = self.points.values().collect();
         pts.sort_by_key(|p| p.ioa);
         pts
+    }
+}
+
+/// Map a category to its untimestamped (NA) ASDU representative. Used by
+/// `get_by_category` / `get_mut_by_category` to give control commands a
+/// stable target when both NA and TB variants exist for the same IOA.
+fn preferred_na_for(category: DataCategory) -> Option<AsduTypeId> {
+    match category {
+        DataCategory::SinglePoint => Some(AsduTypeId::MSpNa1),
+        DataCategory::DoublePoint => Some(AsduTypeId::MDpNa1),
+        DataCategory::StepPosition => Some(AsduTypeId::MStNa1),
+        DataCategory::Bitstring => Some(AsduTypeId::MBoNa1),
+        DataCategory::NormalizedMeasured => Some(AsduTypeId::MMeNa1),
+        DataCategory::ScaledMeasured => Some(AsduTypeId::MMeNb1),
+        DataCategory::FloatMeasured => Some(AsduTypeId::MMeNc1),
+        DataCategory::IntegratedTotals => Some(AsduTypeId::MItNa1),
+        DataCategory::System => None,
     }
 }
 
