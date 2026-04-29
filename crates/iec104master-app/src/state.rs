@@ -51,6 +51,18 @@ pub struct ConnectionInfo {
     pub common_addresses: Vec<u16>,
     pub state: String,
     pub use_tls: bool,
+    // Echo back the protocol parameters so the frontend can pre-fill the
+    // edit dialog without re-parsing the persisted form state.
+    pub t0: u32,
+    pub t1: u32,
+    pub t2: u32,
+    pub t3: u32,
+    pub k: u16,
+    pub w: u16,
+    pub default_qoi: u8,
+    pub default_qcc: u8,
+    pub interrogate_period_s: u32,
+    pub counter_interrogate_period_s: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

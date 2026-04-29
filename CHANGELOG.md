@@ -2,6 +2,29 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-04-29
+
+### Highlights / 亮点
+
+- 🛡️ **主站 IEC 60870-5-104 协议参数全面可配 + 真正的 t1/t2/t3/k/w 状态机** / Master gains full IEC 60870-5-104 link-layer state machine with all spec timers configurable — 新建/编辑连接对话框新增"IEC 104 协议参数"折叠区,可填 t0/t1/t2/t3/k/w、默认 QOI/QCC、总召唤与计数量召唤的自动周期。后端按规范实现:I 帧未确认达 k 时阻塞发送、收到 w 个 I 帧立即回 S 帧、t2 触发延迟 ACK、t3 空闲发 TESTFR ACT、t1 超时关连接;新增 `protocol_state_machine.rs` 集成测试。/ Connection dialog now exposes t0/t1/t2/t3/k/w plus default QOI/QCC plus auto-poll periods for general and counter interrogation. Backend implements the IEC 60870-5-104 §5.2 link-layer state machine — k blocks sender when full, w forces an immediate S-frame ACK, t2 fires a delayed ACK, t3 emits TESTFR ACT, t1 closes the link on missing ACKs. New `protocol_state_machine.rs` integration test covers t1 expiry and t3 idle.
+- 🔄 **工具栏"检查更新"按钮 + 修复 6h 内错过更新的盲区** / Toolbar "Check for Updates" button bypasses the 6h throttle — `check_for_update` 后端新增 `force` 参数,手动点击绕过 6h 节流和 24h snooze;修复用户安装新版后 6h 内重启错过下一版的体验缺陷 / `check_for_update` gains an optional `force` flag, fixing the silent miss when users restarted within 6h of installing a release.
+
+### Added 新增
+
+- **主站后端**: `MasterConfig` 新增 `t0/t1/t2/t3/k/w/default_qoi/default_qcc/interrogate_period_s/counter_interrogate_period_s` 字段,旧序列化向后兼容 / `MasterConfig` gains the new protocol parameter fields with serde-default fallbacks for old configs.
+- **主站后端**: 新增 `MasterConnection::send_interrogation_with_qoi` 与 `send_counter_read_with_qcc`,允许按调用覆盖默认 QOI/QCC / Per-call QOI/QCC overrides for GI and counter interrogation.
+- **主站后端**: 新增周期性 GI / 计数量召唤后台任务,周期由 `interrogate_period_s` / `counter_interrogate_period_s` 控制,0 表示关闭 / Background auto-poll task driven by the two period fields (0 disables).
+- **主站前端**: 连接对话框新增"IEC 104 协议参数"折叠区,字段在 localStorage (`iec104master.newConnForm.v2`) 持久化,编辑模式从 backend 回填 / New collapsible protocol-parameters section in the dialog, persisted in localStorage and pre-filled when editing.
+- **测试**: `crates/iec104sim-core/tests/protocol_state_machine.rs` 验证 t3 触发 TESTFR_ACT、t1 未确认时关连接 / New integration tests for t3 idle test and t1 expiry behaviour.
+
+### Changed 改进
+
+- **主站后端**: `receive_loop` / `receive_loop_mutex` 重写为统一 `RawWrite` trait,共用 t1/t2/t3 tick 检查,TCP 读超时缩到 100 ms 让 timer 响应更快 / Both receive loops now share a `RawWrite` trait and a common timer tick; read timeout reduced to 100 ms for snappier timer firing.
+- **主站后端**: `send_frame_with_event` 重写为带 k 阻塞 + SSN 分配 + 待确认队列追踪的版本,集中在 free-function `send_async_frame`,被 Tauri 命令与周期任务复用 / Send path rewritten as `send_async_frame` (k-window blocking + SSN tracking + pending-ACK list), shared by Tauri commands and the periodic poller.
+- **主站后端**: `connect()` 优先使用 `t0` 作为连接超时,回退到旧 `timeout_ms`,保证旧配置无感升级 / `connect()` honours `t0` first and falls back to legacy `timeout_ms`.
+- **主站更新**: `check_for_update` 命令新增可选 `force: bool` 参数;手动检查 (工具栏"检查更新"按钮) 绕过 6h 节流和 24h snooze,启动自动检查保持原行为 / `check_for_update` gains an optional `force` flag; manual checks via the new toolbar button bypass the 6h throttle and 24h snooze, while the startup auto-check is unchanged.
+- **主站前端**: 工具栏新增"检查更新 / Check for Updates"按钮,无新版时弹出"已是最新版本"提示;修复用户装新版后 6h 内重启错过更新的体验问题 / Toolbar now has a "Check for Updates" button that shows "you are on the latest version" when no update is available; fixes the case where users who installed a release within 6h of restart silently miss newer versions.
+
 ## [1.1.5] - 2026-04-29
 
 ### Highlights / 亮点

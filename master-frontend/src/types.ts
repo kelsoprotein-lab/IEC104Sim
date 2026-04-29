@@ -6,6 +6,18 @@ export interface ConnectionInfo {
   common_addresses: number[]
   state: string
   use_tls: boolean
+  /** IEC 60870-5-104 protocol parameters echoed back from the backend so the
+   *  edit dialog can pre-fill without re-parsing local form state. */
+  t0: number
+  t1: number
+  t2: number
+  t3: number
+  k: number
+  w: number
+  default_qoi: number
+  default_qcc: number
+  interrogate_period_s: number
+  counter_interrogate_period_s: number
 }
 
 export interface ReceivedDataPointInfo {

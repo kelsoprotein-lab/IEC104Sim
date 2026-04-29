@@ -7,6 +7,7 @@ import AboutDialog from './AboutDialog.vue'
 import ControlDialog from './ControlDialog.vue'
 import LangSwitch from './LangSwitch.vue'
 import { useI18n } from '../i18n'
+import type { ConnectionInfo } from '../types'
 
 const { t } = useI18n()
 
@@ -15,6 +16,19 @@ const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
 const refreshTree = inject<() => void>('refreshTree')!
 const refreshData = inject<() => void>('refreshData')!
+type UpdateMeta = { version: string; notes: string; pub_date?: string | null }
+const checkUpdate = inject<(force?: boolean) => Promise<UpdateMeta | null>>('checkUpdate')!
+const updateChecking = ref(false)
+async function manualCheckUpdate() {
+  if (updateChecking.value) return
+  updateChecking.value = true
+  try {
+    const meta = await checkUpdate(true)
+    if (!meta) await showAlert(t('toolbar.alreadyLatest'))
+  } finally {
+    updateChecking.value = false
+  }
+}
 
 // About dialog
 const showAbout = ref(false)
@@ -39,7 +53,11 @@ async function openCustomControl() {
 
 // New Connection modal — persist the user's last-used form values so that
 // TLS paths, target address, etc. survive across app restarts.
-const NEW_CONN_FORM_KEY = 'iec104master.newConnForm.v1'
+//
+// Bumped key to v2 when adding the IEC 104 protocol parameter fields so that
+// older persisted forms (v1, missing the new fields) are discarded rather
+// than spread-merged into the schema with NaN/undefined values.
+const NEW_CONN_FORM_KEY = 'iec104master.newConnForm.v2'
 type NewConnForm = {
   target_address: string
   port: number
@@ -51,6 +69,17 @@ type NewConnForm = {
   key_file: string
   accept_invalid_certs: boolean
   tls_version: 'auto' | 'tls12_only' | 'tls13_only'
+  // IEC 60870-5-104 protocol parameters
+  t0: number
+  t1: number
+  t2: number
+  t3: number
+  k: number
+  w: number
+  default_qoi: number
+  default_qcc: number
+  interrogate_period_s: number
+  counter_interrogate_period_s: number
 }
 const defaultForm = (): NewConnForm => ({
   target_address: '127.0.0.1',
@@ -62,6 +91,16 @@ const defaultForm = (): NewConnForm => ({
   key_file: './client-key.pem',
   accept_invalid_certs: false,
   tls_version: 'auto',
+  t0: 30,
+  t1: 15,
+  t2: 10,
+  t3: 20,
+  k: 12,
+  w: 8,
+  default_qoi: 20,
+  default_qcc: 5,
+  interrogate_period_s: 0,
+  counter_interrogate_period_s: 0,
 })
 function parseCAList(s: string): number[] {
   const seen = new Set<number>()
@@ -132,10 +171,7 @@ function submitButtonLabel(): string {
 // can open this same dialog with the chosen connection's current settings.
 async function openEditConnection(connId: string) {
   try {
-    const conns = await invoke<Array<{
-      id: string; target_address: string; port: number; common_addresses: number[];
-      state: string; use_tls: boolean;
-    }>>('list_connections')
+    const conns = await invoke<Array<ConnectionInfo>>('list_connections')
     const conn = conns.find((c) => c.id === connId)
     if (!conn) return
     if (conn.state === 'Connected') {
@@ -157,6 +193,16 @@ async function openEditConnection(connId: string) {
       key_file: persisted.key_file,
       accept_invalid_certs: persisted.accept_invalid_certs,
       tls_version: persisted.tls_version,
+      t0: conn.t0,
+      t1: conn.t1,
+      t2: conn.t2,
+      t3: conn.t3,
+      k: conn.k,
+      w: conn.w,
+      default_qoi: conn.default_qoi,
+      default_qcc: conn.default_qcc,
+      interrogate_period_s: conn.interrogate_period_s,
+      counter_interrogate_period_s: conn.counter_interrogate_period_s,
     }
     showNewConn.value = true
   } catch (e) {
@@ -195,6 +241,16 @@ async function createConnection() {
         key_file: newConnForm.value.key_file || undefined,
         accept_invalid_certs: newConnForm.value.accept_invalid_certs,
         tls_version: newConnForm.value.use_tls ? newConnForm.value.tls_version : undefined,
+        t0: newConnForm.value.t0,
+        t1: newConnForm.value.t1,
+        t2: newConnForm.value.t2,
+        t3: newConnForm.value.t3,
+        k: newConnForm.value.k,
+        w: newConnForm.value.w,
+        default_qoi: newConnForm.value.default_qoi,
+        default_qcc: newConnForm.value.default_qcc,
+        interrogate_period_s: newConnForm.value.interrogate_period_s,
+        counter_interrogate_period_s: newConnForm.value.counter_interrogate_period_s,
       }
     })
     showNewConn.value = false
@@ -366,6 +422,9 @@ const hasConnection = () => selectedConnectionId.value !== null
     </div>
 
     <div class="toolbar-spacer"></div>
+    <button class="toolbar-btn" :disabled="updateChecking" @click="manualCheckUpdate">
+      {{ updateChecking ? t('toolbar.checkingUpdate') : t('toolbar.checkUpdate') }}
+    </button>
     <LangSwitch />
     <button class="toolbar-title as-button" @click="showAbout = true" :title="t('toolbar.about')">
       {{ t('toolbar.appTitle') }}
@@ -413,6 +472,54 @@ const hasConnection = () => selectedConnectionId.value !== null
             />
             <span class="form-hint">{{ t('newConn.commonAddressHint') }}</span>
           </label>
+
+          <!-- IEC 60870-5-104 protocol parameters -->
+          <details class="proto-section">
+            <summary class="proto-summary">{{ t('newConn.protocolParams') }}</summary>
+            <div class="proto-grid">
+              <label class="form-label">
+                <span>t0 ({{ t('newConn.unitSeconds') }})</span>
+                <input v-model.number="newConnForm.t0" class="form-input" type="number" min="1" max="255" />
+              </label>
+              <label class="form-label">
+                <span>t1 ({{ t('newConn.unitSeconds') }})</span>
+                <input v-model.number="newConnForm.t1" class="form-input" type="number" min="1" max="255" />
+              </label>
+              <label class="form-label">
+                <span>t2 ({{ t('newConn.unitSeconds') }})</span>
+                <input v-model.number="newConnForm.t2" class="form-input" type="number" min="1" max="255" />
+              </label>
+              <label class="form-label">
+                <span>t3 ({{ t('newConn.unitSeconds') }})</span>
+                <input v-model.number="newConnForm.t3" class="form-input" type="number" min="1" max="255" />
+              </label>
+              <label class="form-label">
+                <span>k</span>
+                <input v-model.number="newConnForm.k" class="form-input" type="number" min="1" max="32767" />
+              </label>
+              <label class="form-label">
+                <span>w</span>
+                <input v-model.number="newConnForm.w" class="form-input" type="number" min="1" max="32767" />
+              </label>
+              <label class="form-label">
+                <span>{{ t('newConn.defaultQoi') }}</span>
+                <input v-model.number="newConnForm.default_qoi" class="form-input" type="number" min="0" max="255" />
+              </label>
+              <label class="form-label">
+                <span>{{ t('newConn.defaultQcc') }}</span>
+                <input v-model.number="newConnForm.default_qcc" class="form-input" type="number" min="0" max="255" />
+              </label>
+              <label class="form-label">
+                <span>{{ t('newConn.interrogatePeriod') }}</span>
+                <input v-model.number="newConnForm.interrogate_period_s" class="form-input" type="number" min="0" />
+              </label>
+              <label class="form-label">
+                <span>{{ t('newConn.counterInterrogatePeriod') }}</span>
+                <input v-model.number="newConnForm.counter_interrogate_period_s" class="form-input" type="number" min="0" />
+              </label>
+            </div>
+            <div class="form-hint">{{ t('newConn.protocolParamsHint') }}</div>
+          </details>
 
           <!-- TLS Configuration -->
           <div class="tls-section">
@@ -546,6 +653,11 @@ const hasConnection = () => selectedConnectionId.value !== null
   border-radius: 8px;
   padding: 20px;
   min-width: 340px;
+  /* Cap the dialog so the new "IEC 104 协议参数" section can't push content
+     off-screen — modal-body gets the actual scrollbar. */
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
@@ -554,12 +666,19 @@ const hasConnection = () => selectedConnectionId.value !== null
   font-weight: 600;
   color: #cdd6f4;
   margin-bottom: 16px;
+  flex: 0 0 auto;
 }
 
 .modal-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Take whatever vertical room the modal-box has minus title+footer, and
+     scroll internally if the form is taller. */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* A tiny right padding keeps inputs from butting against the scrollbar. */
+  padding-right: 4px;
 }
 
 .modal-footer {
@@ -567,6 +686,7 @@ const hasConnection = () => selectedConnectionId.value !== null
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+  flex: 0 0 auto;
 }
 
 .form-label {
@@ -600,6 +720,62 @@ const hasConnection = () => selectedConnectionId.value !== null
 .tls-section {
   padding-top: 4px;
   border-top: 1px solid #313244;
+}
+
+.proto-section {
+  border-top: 1px solid #313244;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.proto-summary {
+  font-size: 12px;
+  color: #cdd6f4;
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.proto-summary:hover {
+  color: #89b4fa;
+}
+
+.proto-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  margin-top: 6px;
+}
+
+.proto-grid .form-label {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proto-grid .form-label > span {
+  font-size: 11px;
+  color: #6c7086;
+}
+
+/* Slim down number inputs inside the protocol-params grid so 5 rows stay
+   compact. Hide the native spin buttons too — they add visual noise without
+   making input easier on a desktop form. */
+.proto-grid .form-input {
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 26px;
+  box-sizing: border-box;
+}
+
+.proto-grid .form-input::-webkit-outer-spin-button,
+.proto-grid .form-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.proto-grid .form-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .form-checkbox {

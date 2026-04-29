@@ -4,8 +4,8 @@ export const RELEASES_URL = 'https://github.com/Carl-Dai/IEC60870-5-104-Simulato
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '通信日志大改版: 帧类型与时间格式跟随中英文切换; 新增 "传送原因 (COT)" 列, 把 COT=3 显示为 "突发" 等可读名称; 顶部拖拽手柄可调整面板高度, 持久化到 localStorage; 最新条目自动置顶',
-  '修复: TLS 模式下点击 "断开" 或发送命令延迟数秒 — 接收循环改非阻塞, 共享 mutex 不再被阻塞读卡死, 命令发送最坏延迟降到 ~5 ms',
-  '修复: 15k+ 数据点的连接点击 "删除" UI 冻结 1–2 秒 — 后端短锁 + tokio::spawn 异步析构; selectedPoints 改 shallowRef + refreshTree 80 ms 防抖',
-  '改进: 全应用统一暗色滚动条, 覆盖 macOS "始终显示滚动条" 模式下的白色 track',
+  '里程碑: IEC 60870-5-104 协议参数全面可配 + 真正的 t1/t2/t3/k/w 链路层状态机 — 连接对话框新增 "协议参数" 折叠区可填 t0/t1/t2/t3/k/w、默认 QOI/QCC、总召唤/计数量召唤自动周期; 后端按规范实现 k 阻塞发送、w 强制 ACK、t2 延迟 ACK、t3 TESTFR ACT、t1 超时关连接',
+  '新增: 周期性总召唤 / 计数量召唤后台任务, 周期由 interrogate_period_s / counter_interrogate_period_s 控制, 0 表示关闭',
+  '新增: 工具栏 "检查更新" 按钮, 绕过 6h 节流和 24h snooze; 修复用户装新版后 6h 内重启错过下一版的体验缺陷',
+  '改进: 连接对话框字段在 localStorage 持久化, 编辑模式从后端回填; 旧 v1 表单自动迁移',
 ]

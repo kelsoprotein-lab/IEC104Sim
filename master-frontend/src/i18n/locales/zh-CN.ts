@@ -19,6 +19,9 @@ export type DictShape = {
     clockSync: string
     counterRead: string
     customControl: string
+    checkUpdate: string
+    checkingUpdate: string
+    alreadyLatest: string
     appTitle: string
     about: string
   }
@@ -41,6 +44,13 @@ export type DictShape = {
     keyFile: string
     acceptInvalidCerts: string
     create: string
+    protocolParams: string
+    protocolParamsHint: string
+    unitSeconds: string
+    defaultQoi: string
+    defaultQcc: string
+    interrogatePeriod: string
+    counterInterrogatePeriod: string
   }
   tree: {
     title: string
@@ -231,6 +241,9 @@ const dict: DictShape = {
     clockSync: '时钟同步',
     counterRead: '累计量召唤',
     customControl: '自定义控制',
+    checkUpdate: '检查更新',
+    checkingUpdate: '检查中…',
+    alreadyLatest: '已是最新版本',
     appTitle: 'IEC104 Master',
     about: '关于',
   },
@@ -253,6 +266,13 @@ const dict: DictShape = {
     keyFile: '客户端密钥路径',
     acceptInvalidCerts: '接受无效证书（测试用）',
     create: '创建',
+    protocolParams: 'IEC 104 协议参数',
+    protocolParamsHint: 't0/t1/t2/t3/k/w 遵循 IEC 60870-5-104 §5.2；周期为 0 时不进行自动召唤',
+    unitSeconds: '秒',
+    defaultQoi: '默认 QOI（总召唤限定词）',
+    defaultQcc: '默认 QCC（计数量召唤限定词）',
+    interrogatePeriod: '总召唤周期 (秒，0=关闭)',
+    counterInterrogatePeriod: '计数量召唤周期 (秒，0=关闭)',
   },
   tree: {
     title: '连接列表',

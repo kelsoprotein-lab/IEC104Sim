@@ -116,7 +116,7 @@ onMounted(async () => {
     }
     refreshTree()
   })
-  setTimeout(checkUpdate, 2000)
+  setTimeout(() => checkUpdate(false), 2000)
 })
 
 onUnmounted(() => {
@@ -157,17 +157,20 @@ function toggleLog() {
 const updateMeta = ref<{ version: string; notes: string; pub_date?: string | null } | null>(null)
 const updateVisible = ref(false)
 
-async function checkUpdate() {
+async function checkUpdate(force = false): Promise<{ version: string; notes: string; pub_date?: string | null } | null> {
   try {
-    const meta = await invoke<{ version: string; notes: string; pub_date?: string | null } | null>('check_for_update')
+    const meta = await invoke<{ version: string; notes: string; pub_date?: string | null } | null>('check_for_update', { force })
     if (meta) {
       updateMeta.value = meta
       updateVisible.value = true
     }
+    return meta
   } catch (e) {
     console.warn('update check failed', e)
+    return null
   }
 }
+provide('checkUpdate', checkUpdate)
 
 function snoozeUpdate() {
   if (updateMeta.value) {

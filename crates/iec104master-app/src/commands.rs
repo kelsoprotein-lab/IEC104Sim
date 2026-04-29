@@ -43,6 +43,22 @@ pub struct CreateConnectionRequest {
     pub accept_invalid_certs: Option<bool>,
     /// TLS version policy: "auto" | "tls12_only" | "tls13_only" (default: "auto")
     pub tls_version: Option<String>,
+    // ---- IEC 60870-5-104 protocol parameters (all optional; defaults from
+    //      MasterConfig when absent). Frontend sends these as JSON numbers. ----
+    pub t0: Option<u32>,
+    pub t1: Option<u32>,
+    pub t2: Option<u32>,
+    pub t3: Option<u32>,
+    pub k: Option<u16>,
+    pub w: Option<u16>,
+    /// QOI for general interrogation (1..=255). 20 = global station.
+    pub default_qoi: Option<u8>,
+    /// QCC for counter interrogation (1..=255). 5 = total + no freeze.
+    pub default_qcc: Option<u8>,
+    /// Period (s) for auto general interrogation. 0 disables.
+    pub interrogate_period_s: Option<u32>,
+    /// Period (s) for auto counter interrogation. 0 disables.
+    pub counter_interrogate_period_s: Option<u32>,
 }
 
 impl CreateConnectionRequest {
@@ -72,7 +88,7 @@ pub async fn create_connection(
     };
 
     let common_addresses = request.resolve_cas();
-    let config = MasterConfig {
+    let mut config = MasterConfig {
         target_address: request.target_address.clone(),
         port: request.port,
         // Core's MasterConfig still tracks a single "primary" CA used for
@@ -94,7 +110,19 @@ pub async fn create_connection(
                 _ => TlsVersionPolicy::Auto,
             },
         },
+        ..MasterConfig::default()
     };
+    // Override the per-protocol params from the request when supplied.
+    if let Some(v) = request.t0 { config.t0 = v; }
+    if let Some(v) = request.t1 { config.t1 = v; }
+    if let Some(v) = request.t2 { config.t2 = v; }
+    if let Some(v) = request.t3 { config.t3 = v; }
+    if let Some(v) = request.k { config.k = v; }
+    if let Some(v) = request.w { config.w = v; }
+    if let Some(v) = request.default_qoi { config.default_qoi = v; }
+    if let Some(v) = request.default_qcc { config.default_qcc = v; }
+    if let Some(v) = request.interrogate_period_s { config.interrogate_period_s = v; }
+    if let Some(v) = request.counter_interrogate_period_s { config.counter_interrogate_period_s = v; }
 
     let log_collector = Arc::new(LogCollector::new());
     let connection = MasterConnection::new(config.clone())
@@ -126,6 +154,16 @@ pub async fn create_connection(
         common_addresses: common_addresses.clone(),
         state: format!("{:?}", connection.state()),
         use_tls,
+        t0: config.t0,
+        t1: config.t1,
+        t2: config.t2,
+        t3: config.t3,
+        k: config.k,
+        w: config.w,
+        default_qoi: config.default_qoi,
+        default_qcc: config.default_qcc,
+        interrogate_period_s: config.interrogate_period_s,
+        counter_interrogate_period_s: config.counter_interrogate_period_s,
     };
 
     state.connections.write().await.insert(
@@ -204,13 +242,24 @@ pub async fn list_connections(
     let mut result = Vec::new();
 
     for (id, conn_state) in connections.iter() {
+        let cfg = &conn_state.connection.config;
         result.push(ConnectionInfo {
             id: id.clone(),
-            target_address: conn_state.connection.config.target_address.clone(),
-            port: conn_state.connection.config.port,
+            target_address: cfg.target_address.clone(),
+            port: cfg.port,
             common_addresses: conn_state.common_addresses.clone(),
             state: format!("{:?}", conn_state.connection.state()),
-            use_tls: conn_state.connection.config.tls.enabled,
+            use_tls: cfg.tls.enabled,
+            t0: cfg.t0,
+            t1: cfg.t1,
+            t2: cfg.t2,
+            t3: cfg.t3,
+            k: cfg.k,
+            w: cfg.w,
+            default_qoi: cfg.default_qoi,
+            default_qcc: cfg.default_qcc,
+            interrogate_period_s: cfg.interrogate_period_s,
+            counter_interrogate_period_s: cfg.counter_interrogate_period_s,
         });
     }
 

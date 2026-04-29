@@ -166,6 +166,7 @@ fn master_config(port: u16, version: TlsVersionPolicy, ca: &std::path::Path) -> 
             accept_invalid_certs: false,
             version,
         },
+        ..Default::default()
     }
 }
 
@@ -251,6 +252,7 @@ async fn master_tls13_only_handshakes_with_tls13_server() {
             accept_invalid_certs: true,
             version: TlsVersionPolicy::Tls13Only,
         },
+        ..Default::default()
     });
     master
         .connect()

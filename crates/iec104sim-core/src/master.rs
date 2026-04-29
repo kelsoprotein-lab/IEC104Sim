@@ -181,16 +181,68 @@ pub enum MasterState {
 }
 
 /// Configuration for a master connection.
+///
+/// Protocol parameters t0/t1/t2/t3/k/w follow IEC 60870-5-104 §5.2 defaults
+/// (t0=30s, t1=15s, t2=10s, t3=20s, k=12, w=8). `default_qoi` / `default_qcc`
+/// are applied when the caller doesn't override them on `send_interrogation`
+/// / `send_counter_read`. `interrogate_period_s` and
+/// `counter_interrogate_period_s` drive the optional auto-poll loops; 0
+/// disables them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MasterConfig {
     pub target_address: String,
     pub port: u16,
     pub common_address: u16,
+    /// Legacy: TCP connect timeout in ms. Kept for backward compat with
+    /// older persisted configs; superseded by `t0` (in seconds) when both
+    /// are present.
     pub timeout_ms: u64,
     /// TLS configuration (optional)
     #[serde(default)]
     pub tls: TlsConfig,
+    /// t0: connection establishment timeout (seconds).
+    #[serde(default = "default_t0")]
+    pub t0: u32,
+    /// t1: timeout waiting for ACK of sent I-frame or TESTFR_CON (seconds).
+    #[serde(default = "default_t1")]
+    pub t1: u32,
+    /// t2: timeout for sending an S-frame ACK after receiving I-frames (seconds).
+    /// Spec requires t2 < t1.
+    #[serde(default = "default_t2")]
+    pub t2: u32,
+    /// t3: idle timeout before sending TESTFR_ACT (seconds).
+    #[serde(default = "default_t3")]
+    pub t3: u32,
+    /// k: max number of unacknowledged outgoing I-frames.
+    #[serde(default = "default_k")]
+    pub k: u16,
+    /// w: max number of received I-frames before forcing an S-frame ACK.
+    /// Spec recommends w ≤ 2/3 · k.
+    #[serde(default = "default_w")]
+    pub w: u16,
+    /// Default QOI (Qualifier of Interrogation) for general interrogation.
+    /// 20 = global station interrogation.
+    #[serde(default = "default_qoi_value")]
+    pub default_qoi: u8,
+    /// Default QCC (Qualifier of Counter Interrogation). 5 = total + no freeze.
+    #[serde(default = "default_qcc_value")]
+    pub default_qcc: u8,
+    /// Period for auto general interrogation in seconds. 0 disables.
+    #[serde(default)]
+    pub interrogate_period_s: u32,
+    /// Period for auto counter interrogation in seconds. 0 disables.
+    #[serde(default)]
+    pub counter_interrogate_period_s: u32,
 }
+
+fn default_t0() -> u32 { 30 }
+fn default_t1() -> u32 { 15 }
+fn default_t2() -> u32 { 10 }
+fn default_t3() -> u32 { 20 }
+fn default_k() -> u16 { 12 }
+fn default_w() -> u16 { 8 }
+fn default_qoi_value() -> u8 { 20 }
+fn default_qcc_value() -> u8 { 5 }
 
 impl Default for MasterConfig {
     fn default() -> Self {
@@ -200,6 +252,16 @@ impl Default for MasterConfig {
             common_address: 1,
             timeout_ms: 3000,
             tls: TlsConfig::default(),
+            t0: default_t0(),
+            t1: default_t1(),
+            t2: default_t2(),
+            t3: default_t3(),
+            k: default_k(),
+            w: default_w(),
+            default_qoi: default_qoi_value(),
+            default_qcc: default_qcc_value(),
+            interrogate_period_s: 0,
+            counter_interrogate_period_s: 0,
         }
     }
 }
@@ -279,25 +341,64 @@ impl MasterReceivedData {
     }
 }
 
-/// Shared sequence number counters for IEC 104 protocol.
+/// Full IEC 60870-5-104 protocol state (SSN/RSN + timers + windowing).
+///
+/// All fields are accessed under a single `std::sync::Mutex` so the blocking
+/// receiver thread and async senders can share without crossing async/sync
+/// boundaries inside the lock.
+///
+/// 15-bit SSN/RSN wrap at 32768; helpers `seq_lt` / `seq_inc` handle that.
 #[derive(Debug)]
-pub struct SeqNumbers {
-    /// Send Sequence Number (incremented for each I-frame sent)
+pub struct ProtocolState {
+    /// Send Sequence Number — next SSN to use when sending an I-frame.
     pub ssn: u16,
-    /// Receive Sequence Number (incremented for each I-frame received)
+    /// Receive Sequence Number — next SSN expected from peer.
     pub rsn: u16,
+    /// Outgoing I-frames awaiting ACK: (their SSN, t1 deadline).
+    pub pending_acks: std::collections::VecDeque<(u16, std::time::Instant)>,
+    /// Number of received I-frames since we last sent an S/I frame.
+    pub unacked_received: u16,
+    /// Last time we received any frame (resets t3 idle timer).
+    pub last_rx: std::time::Instant,
+    /// Deadline for sending an S-frame ACK (armed on first I-frame after
+    /// our last ACK; cleared when we send any S/I frame). None = idle.
+    pub pending_ack_deadline: Option<std::time::Instant>,
+    /// If we've sent TESTFR_ACT, the deadline by which we expect TESTFR_CON.
+    /// None = no test in flight.
+    pub test_pending_deadline: Option<std::time::Instant>,
+    /// Cached protocol parameters from MasterConfig.
+    pub t1: std::time::Duration,
+    pub t2: std::time::Duration,
+    pub t3: std::time::Duration,
+    pub k: u16,
+    pub w: u16,
 }
 
-impl SeqNumbers {
-    pub fn new() -> Self {
-        Self { ssn: 0, rsn: 0 }
+impl ProtocolState {
+    pub fn new(t1: std::time::Duration, t2: std::time::Duration, t3: std::time::Duration, k: u16, w: u16) -> Self {
+        Self {
+            ssn: 0,
+            rsn: 0,
+            pending_acks: std::collections::VecDeque::new(),
+            unacked_received: 0,
+            last_rx: std::time::Instant::now(),
+            pending_ack_deadline: None,
+            test_pending_deadline: None,
+            t1, t2, t3, k, w,
+        }
     }
 }
 
-impl Default for SeqNumbers {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Strict-less-than for 15-bit sequence numbers (0..32768) with wraparound.
+/// Returns true if `a` is "before" `b` in modulo-2^15 arithmetic.
+fn seq_lt(a: u16, b: u16) -> bool {
+    let diff = b.wrapping_sub(a) & 0x7FFF;
+    diff != 0 && diff < 0x4000
+}
+
+/// Increment a 15-bit sequence number with wraparound.
+fn seq_inc(n: u16) -> u16 {
+    (n + 1) & 0x7FFF
 }
 
 /// An IEC 104 master connection.
@@ -313,8 +414,15 @@ pub struct MasterConnection {
     /// Mutex-protected TLS stream for send operations (TLS streams cannot be cloned).
     tls_stream_mutex: Option<Arc<std::sync::Mutex<MasterStream>>>,
     receiver_handle: Option<tokio::task::JoinHandle<()>>,
-    /// Shared sequence numbers for SSN/RSN tracking.
-    seq: Arc<std::sync::Mutex<SeqNumbers>>,
+    /// Periodic auto-poll task (GI / counter interrogation) for this connection.
+    periodic_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Full protocol state: SSN/RSN, timers, windowing.
+    protocol: Arc<std::sync::Mutex<ProtocolState>>,
+    /// Wakes senders when peer ACKs free up a k slot.
+    ack_notify: Arc<tokio::sync::Notify>,
+    /// Serializes the (allocate-SSN, write-frame) critical section so two
+    /// concurrent senders can't reorder I-frames on the wire.
+    send_lock: Arc<tokio::sync::Mutex<()>>,
     /// Broadcast channel for control command responses (COT=7, COT=10).
     control_tx: tokio::sync::broadcast::Sender<ControlResponse>,
 }
@@ -323,6 +431,13 @@ impl MasterConnection {
     pub fn new(config: MasterConfig) -> Self {
         let (control_tx, _) = tokio::sync::broadcast::channel(64);
         let (state_tx, _) = tokio::sync::watch::channel(MasterState::Disconnected);
+        let protocol = ProtocolState::new(
+            std::time::Duration::from_secs(config.t1 as u64),
+            std::time::Duration::from_secs(config.t2 as u64),
+            std::time::Duration::from_secs(config.t3 as u64),
+            config.k,
+            config.w,
+        );
         Self {
             config,
             received_data: Arc::new(RwLock::new(MasterReceivedData::new())),
@@ -332,7 +447,10 @@ impl MasterConnection {
             stream: Arc::new(RwLock::new(None)),
             tls_stream_mutex: None,
             receiver_handle: None,
-            seq: Arc::new(std::sync::Mutex::new(SeqNumbers::new())),
+            periodic_handle: None,
+            protocol: Arc::new(std::sync::Mutex::new(protocol)),
+            ack_notify: Arc::new(tokio::sync::Notify::new()),
+            send_lock: Arc::new(tokio::sync::Mutex::new(())),
             control_tx,
         }
     }
@@ -359,11 +477,27 @@ impl MasterConnection {
         }
 
         self.state_tx.send_replace(MasterState::Connecting);
-        // Reset sequence numbers on new connection
-        *self.seq.lock().unwrap() = SeqNumbers::new();
+        // Reset protocol state on new connection — pulls fresh values from
+        // the (possibly mutated) MasterConfig so config tweaks between
+        // connect cycles take effect.
+        *self.protocol.lock().unwrap() = ProtocolState::new(
+            std::time::Duration::from_secs(self.config.t1 as u64),
+            std::time::Duration::from_secs(self.config.t2 as u64),
+            std::time::Duration::from_secs(self.config.t3 as u64),
+            self.config.k,
+            self.config.w,
+        );
+        self.shutdown_flag.store(false, std::sync::atomic::Ordering::SeqCst);
 
         let addr = format!("{}:{}", self.config.target_address, self.config.port);
-        let timeout = std::time::Duration::from_millis(self.config.timeout_ms);
+        // Prefer t0 (seconds, IEC 104 spec param) over the legacy timeout_ms
+        // when t0 differs from the default. This keeps old configs working
+        // while letting new configs use the spec field.
+        let timeout = if self.config.t0 != default_t0() {
+            std::time::Duration::from_secs(self.config.t0 as u64)
+        } else {
+            std::time::Duration::from_millis(self.config.timeout_ms)
+        };
 
         let tcp_stream = TcpStream::connect_timeout(
             &addr.parse().map_err(|e| MasterError::ConnectionError(format!("Invalid address: {}", e)))?,
@@ -373,7 +507,9 @@ impl MasterConnection {
             MasterError::ConnectionError(format!("Failed to connect to {}: {}", addr, e))
         })?;
 
-        tcp_stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
+        // Short read timeout so the receive loop ticks timers (t1/t2/t3)
+        // promptly when no data is flowing.
+        tcp_stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
         tcp_stream.set_nodelay(true).ok();
 
         // Wrap with TLS if configured
@@ -440,20 +576,23 @@ impl MasterConnection {
                     .map_err(|e| MasterError::ConnectionError(format!("Failed to send STARTDT: {}", e)))?;
             }
 
+            // Mark protocol state's last_rx now that the link is up — the
+            // t3 idle timer counts from here.
+            self.protocol.lock().unwrap().last_rx = std::time::Instant::now();
             self.state_tx.send_replace(MasterState::Connected);
 
             // Start receiver thread with mutex-based stream access
-            self.shutdown_flag.store(false, std::sync::atomic::Ordering::SeqCst);
             let shutdown_flag = self.shutdown_flag.clone();
             let received_data = self.received_data.clone();
             let log_collector = self.log_collector.clone();
             let state_tx = self.state_tx.clone();
             let stream_for_receiver = stream_mutex.clone();
-            let seq = self.seq.clone();
+            let protocol = self.protocol.clone();
+            let ack_notify = self.ack_notify.clone();
             let control_tx = self.control_tx.clone();
 
             let handle = tokio::task::spawn_blocking(move || {
-                receive_loop_mutex(stream_for_receiver, received_data, log_collector, shutdown_flag, state_tx, seq, control_tx);
+                receive_loop_mutex(stream_for_receiver, received_data, log_collector, shutdown_flag, state_tx, protocol, ack_notify, control_tx);
             });
 
             self.receiver_handle = Some(handle);
@@ -470,18 +609,20 @@ impl MasterConnection {
             };
 
             *self.stream.write().await = Some(master_stream);
+            // Mark t3 baseline now that the link is up.
+            self.protocol.lock().unwrap().last_rx = std::time::Instant::now();
             self.state_tx.send_replace(MasterState::Connected);
 
-            self.shutdown_flag.store(false, std::sync::atomic::Ordering::SeqCst);
             let shutdown_flag = self.shutdown_flag.clone();
             let received_data = self.received_data.clone();
             let log_collector = self.log_collector.clone();
             let state_tx = self.state_tx.clone();
-            let seq = self.seq.clone();
+            let protocol = self.protocol.clone();
+            let ack_notify = self.ack_notify.clone();
             let control_tx = self.control_tx.clone();
 
             let handle = tokio::task::spawn_blocking(move || {
-                receive_loop(stream_clone, received_data, log_collector, shutdown_flag, state_tx, seq, control_tx);
+                receive_loop(stream_clone, received_data, log_collector, shutdown_flag, state_tx, protocol, ack_notify, control_tx);
             });
 
             self.receiver_handle = Some(handle);
@@ -495,7 +636,89 @@ impl MasterConnection {
             ));
         }
 
+        // Spawn the optional periodic GI / counter interrogation poller.
+        self.spawn_periodic_poller();
+
         Ok(())
+    }
+
+    /// Background task: emits GI and/or counter interrogation at the
+    /// configured periods. No-op if both periods are 0. Terminates when the
+    /// connection state leaves Connected.
+    fn spawn_periodic_poller(&mut self) {
+        let gi_period = self.config.interrogate_period_s;
+        let cn_period = self.config.counter_interrogate_period_s;
+        if gi_period == 0 && cn_period == 0 {
+            return;
+        }
+
+        let ca = self.config.common_address;
+        let qoi = self.config.default_qoi;
+        let qcc = self.config.default_qcc;
+        let send_lock = self.send_lock.clone();
+        let protocol = self.protocol.clone();
+        let ack_notify = self.ack_notify.clone();
+        let stream = self.stream.clone();
+        let tls_mutex = self.tls_stream_mutex.clone();
+        let log_collector = self.log_collector.clone();
+        let state_tx = self.state_tx.clone();
+        let mut state_rx = self.state_tx.subscribe();
+        let shutdown_flag = self.shutdown_flag.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut gi_interval = if gi_period > 0 {
+                Some(tokio::time::interval(std::time::Duration::from_secs(gi_period as u64)))
+            } else {
+                None
+            };
+            let mut cn_interval = if cn_period > 0 {
+                Some(tokio::time::interval(std::time::Duration::from_secs(cn_period as u64)))
+            } else {
+                None
+            };
+            // tokio::time::interval fires the first tick immediately; consume it
+            // so the initial poll waits one full period after connect.
+            if let Some(ref mut iv) = gi_interval { iv.tick().await; }
+            if let Some(ref mut iv) = cn_interval { iv.tick().await; }
+
+            loop {
+                if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                if !matches!(*state_rx.borrow(), MasterState::Connected) {
+                    if state_rx.changed().await.is_err() { break; }
+                    continue;
+                }
+                tokio::select! {
+                    _ = async {
+                        if let Some(ref mut iv) = gi_interval { iv.tick().await; }
+                        else { std::future::pending::<()>().await; }
+                    } => {
+                        let frame = build_gi_command(ca, qoi);
+                        let _ = send_async_frame(
+                            &send_lock, &protocol, &ack_notify, &stream, &tls_mutex,
+                            &log_collector, &state_tx, frame, "周期性 GI",
+                            FrameLabel::GeneralInterrogation, ca, None,
+                        ).await;
+                    }
+                    _ = async {
+                        if let Some(ref mut iv) = cn_interval { iv.tick().await; }
+                        else { std::future::pending::<()>().await; }
+                    } => {
+                        let frame = build_counter_read_command(ca, qcc);
+                        let _ = send_async_frame(
+                            &send_lock, &protocol, &ack_notify, &stream, &tls_mutex,
+                            &log_collector, &state_tx, frame, "周期性计数量召唤",
+                            FrameLabel::CounterRead, ca, None,
+                        ).await;
+                    }
+                    res = state_rx.changed() => {
+                        if res.is_err() { break; }
+                    }
+                }
+            }
+        });
+        self.periodic_handle = Some(handle);
     }
 
     /// Create a TLS stream from a TCP stream using the configured certificates.
@@ -590,6 +813,12 @@ impl MasterConnection {
 
         self.shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
 
+        // Abort the periodic poller before joining the receiver — it shares
+        // the stream lock and would otherwise hold up disconnect.
+        if let Some(handle) = self.periodic_handle.take() {
+            handle.abort();
+        }
+
         if let Some(handle) = self.receiver_handle.take() {
             // Cap the wait so disconnect() can never hang the Tauri command
             // thread. The receiver loop polls shutdown_flag after each
@@ -599,6 +828,10 @@ impl MasterConnection {
             // timeout and drop its Arc, freeing the underlying socket.
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
+
+        // Wake any sender that's still parked on the k-window so it can
+        // notice the connection went down and bail out.
+        self.ack_notify.notify_waiters();
 
         *self.stream.write().await = None;
         self.tls_stream_mutex = None;
@@ -615,10 +848,17 @@ impl MasterConnection {
         Ok(())
     }
 
-    /// Send General Interrogation command.
+    /// Send General Interrogation command. `qoi=None` falls back to the
+    /// connection's `default_qoi` (typically 20 = global station).
     pub async fn send_interrogation(&self, ca: u16) -> Result<(), MasterError> {
-        let frame = build_gi_command(ca);
-        self.send_frame(&frame, "GI", FrameLabel::GeneralInterrogation, ca).await
+        self.send_interrogation_with_qoi(ca, None).await
+    }
+
+    /// Same as `send_interrogation` but with an explicit QOI override.
+    pub async fn send_interrogation_with_qoi(&self, ca: u16, qoi: Option<u8>) -> Result<(), MasterError> {
+        let qoi = qoi.unwrap_or(self.config.default_qoi);
+        let frame = build_gi_command(ca, qoi);
+        self.send_frame(&frame, &format!("GI QOI={}", qoi), FrameLabel::GeneralInterrogation, ca).await
     }
 
     /// Send Clock Synchronization command.
@@ -627,10 +867,17 @@ impl MasterConnection {
         self.send_frame(&frame, "时钟同步", FrameLabel::ClockSync, ca).await
     }
 
-    /// Send Counter Interrogation command.
+    /// Send Counter Interrogation command. `qcc=None` falls back to the
+    /// connection's `default_qcc` (typically 5 = total + no freeze).
     pub async fn send_counter_read(&self, ca: u16) -> Result<(), MasterError> {
-        let frame = build_counter_read_command(ca);
-        self.send_frame(&frame, "累计量召唤", FrameLabel::CounterRead, ca).await
+        self.send_counter_read_with_qcc(ca, None).await
+    }
+
+    /// Same as `send_counter_read` but with an explicit QCC override.
+    pub async fn send_counter_read_with_qcc(&self, ca: u16, qcc: Option<u8>) -> Result<(), MasterError> {
+        let qcc = qcc.unwrap_or(self.config.default_qcc);
+        let frame = build_counter_read_command(ca, qcc);
+        self.send_frame(&frame, &format!("累计量召唤 QCC={}", qcc), FrameLabel::CounterRead, ca).await
     }
 
     /// Send Single Command.
@@ -849,79 +1096,164 @@ impl MasterConnection {
         ca: u16,
         event: Option<crate::log_entry::DetailEvent>,
     ) -> Result<(), MasterError> {
-        let mut frame = frame.to_vec();
-        // APCI control field starts at byte 2. Type discrimination per IEC 104:
-        //   I-frame: ctrl1 LSB == 0   → patch SSN (bytes 2-3) and RSN (bytes 4-5)
-        //   S-frame: ctrl1 == 0x01    → patch RSN only
-        //   U-frame: ctrl1 & 0x03 ==  0x03 → leave untouched
-        if frame.len() >= 6 {
-            let ctrl1 = frame[2];
-            if ctrl1 & 0x01 == 0 {
-                let mut seq = self.seq.lock().unwrap();
-                let ssn_bytes = (seq.ssn << 1).to_le_bytes();
-                let rsn_bytes = (seq.rsn << 1).to_le_bytes();
-                frame[2] = ssn_bytes[0];
-                frame[3] = ssn_bytes[1];
-                frame[4] = rsn_bytes[0];
-                frame[5] = rsn_bytes[1];
-                seq.ssn = seq.ssn.wrapping_add(1);
-            } else if ctrl1 & 0x03 == 0x01 {
-                let seq = self.seq.lock().unwrap();
-                let rsn_bytes = (seq.rsn << 1).to_le_bytes();
-                frame[4] = rsn_bytes[0];
-                frame[5] = rsn_bytes[1];
+        send_async_frame(
+            &self.send_lock,
+            &self.protocol,
+            &self.ack_notify,
+            &self.stream,
+            &self.tls_stream_mutex,
+            &self.log_collector,
+            &self.state_tx,
+            frame.to_vec(),
+            detail,
+            label,
+            ca,
+            event,
+        ).await
+    }
+}
+
+/// Free-function sender shared by `MasterConnection::send_frame_with_event`
+/// and the periodic auto-poller. Handles k-window blocking, SSN allocation,
+/// pending-ACK tracking for t1, and stream serialization.
+#[allow(clippy::too_many_arguments)]
+async fn send_async_frame(
+    send_lock: &Arc<tokio::sync::Mutex<()>>,
+    protocol: &Arc<std::sync::Mutex<ProtocolState>>,
+    ack_notify: &Arc<tokio::sync::Notify>,
+    stream: &Arc<RwLock<Option<MasterStream>>>,
+    tls_mutex: &Option<Arc<std::sync::Mutex<MasterStream>>>,
+    log_collector: &Option<Arc<LogCollector>>,
+    state_tx: &tokio::sync::watch::Sender<MasterState>,
+    mut frame: Vec<u8>,
+    detail: &str,
+    label: FrameLabel,
+    ca: u16,
+    event: Option<crate::log_entry::DetailEvent>,
+) -> Result<(), MasterError> {
+    if frame.len() < 6 {
+        return Err(MasterError::SendError(format!("{}: 帧长度过短", detail)));
+    }
+
+    // Take the send-lock for the entire allocate-and-write so two concurrent
+    // I-frame senders can't interleave SSN allocation with stream writes.
+    let _send_guard = send_lock.lock().await;
+
+    let ctrl1 = frame[2];
+    let is_iframe = ctrl1 & 0x01 == 0;
+    let is_sframe = ctrl1 & 0x03 == 0x01;
+
+    if is_iframe {
+        // Block until pending_acks.len() < k. Re-check on each Notify or
+        // every ~100ms; bail out if the connection drops.
+        loop {
+            if !matches!(*state_tx.borrow(), MasterState::Connected) {
+                return Err(MasterError::NotConnected);
             }
+            let need_wait = {
+                let s = protocol.lock().unwrap();
+                s.pending_acks.len() >= s.k as usize
+            };
+            if !need_wait { break; }
+            let notif = ack_notify.notified();
+            tokio::pin!(notif);
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(200), notif).await;
         }
 
-        if let Some(ref mutex) = self.tls_stream_mutex {
-            let mut stream = mutex.lock()
-                .map_err(|e| MasterError::SendError(format!("mutex lock failed: {}", e)))?;
-            // The receive loop puts the underlying TCP stream in non-blocking
-            // mode, so writes can return WouldBlock if the kernel send buffer
-            // is momentarily full. Retry briefly — IEC 104 frames are tiny so
-            // this almost never loops more than once.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let mut written = 0;
-            while written < frame.len() {
-                match stream.write(&frame[written..]) {
-                    Ok(0) => return Err(MasterError::SendError(format!("{}: write returned 0", detail))),
-                    Ok(n) => written += n,
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        if std::time::Instant::now() >= deadline {
-                            return Err(MasterError::SendError(format!("{}: write timed out", detail)));
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut s = protocol.lock().unwrap();
+        let ssn = s.ssn;
+        let rsn = s.rsn;
+        let deadline = std::time::Instant::now() + s.t1;
+        s.pending_acks.push_back((ssn, deadline));
+        s.ssn = seq_inc(s.ssn);
+        // I-frame piggybacks our RSN — clears any pending S-frame ACK.
+        s.unacked_received = 0;
+        s.pending_ack_deadline = None;
+        let ssn_bytes = (ssn << 1).to_le_bytes();
+        let rsn_bytes = (rsn << 1).to_le_bytes();
+        frame[2] = ssn_bytes[0];
+        frame[3] = ssn_bytes[1];
+        frame[4] = rsn_bytes[0];
+        frame[5] = rsn_bytes[1];
+    } else if is_sframe {
+        let mut s = protocol.lock().unwrap();
+        let rsn_bytes = (s.rsn << 1).to_le_bytes();
+        frame[4] = rsn_bytes[0];
+        frame[5] = rsn_bytes[1];
+        s.unacked_received = 0;
+        s.pending_ack_deadline = None;
+    }
+    // U-frame: leave control field untouched.
+
+    if let Some(mutex) = tls_mutex {
+        let mut stream_guard = mutex.lock()
+            .map_err(|e| MasterError::SendError(format!("mutex lock failed: {}", e)))?;
+        let write_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut written = 0;
+        while written < frame.len() {
+            match stream_guard.write(&frame[written..]) {
+                Ok(0) => return Err(MasterError::SendError(format!("{}: write returned 0", detail))),
+                Ok(n) => written += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= write_deadline {
+                        return Err(MasterError::SendError(format!("{}: write timed out", detail)));
                     }
-                    Err(e) => return Err(MasterError::SendError(format!("{}: {}", detail, e))),
+                    std::thread::sleep(std::time::Duration::from_millis(2));
                 }
-            }
-        } else {
-            let stream_guard = self.stream.read().await;
-            let stream = stream_guard.as_ref()
-                .ok_or(MasterError::NotConnected)?;
-            match stream {
-                MasterStream::Plain(s) => {
-                    (&*s).write_all(&frame)
-                        .map_err(|e| MasterError::SendError(format!("{}: {}", detail, e)))?;
-                }
-                MasterStream::Tls(_) => unreachable!("TLS stream should use tls_stream_mutex"),
+                Err(e) => return Err(MasterError::SendError(format!("{}: {}", detail, e))),
             }
         }
-
-        if let Some(ref lc) = self.log_collector {
-            let mut entry = LogEntry::with_raw_bytes(
-                Direction::Tx,
-                label,
-                format!("{} CA={}", detail, ca),
-                frame.to_vec(),
-            );
-            if let Some(ev) = event {
-                entry = entry.with_detail_event(ev.kind, ev.payload);
+    } else {
+        let stream_guard = stream.read().await;
+        let s = stream_guard.as_ref()
+            .ok_or(MasterError::NotConnected)?;
+        match s {
+            MasterStream::Plain(s) => {
+                (&*s).write_all(&frame)
+                    .map_err(|e| MasterError::SendError(format!("{}: {}", detail, e)))?;
             }
-            lc.try_add(entry);
+            MasterStream::Tls(_) => return Err(MasterError::SendError(format!("{}: TLS stream missing mutex", detail))),
         }
+    }
 
-        Ok(())
+    if let Some(ref lc) = log_collector {
+        let mut entry = LogEntry::with_raw_bytes(
+            Direction::Tx,
+            label,
+            format!("{} CA={}", detail, ca),
+            frame.to_vec(),
+        );
+        if let Some(ev) = event {
+            entry = entry.with_detail_event(ev.kind, ev.payload);
+        }
+        lc.try_add(entry);
+    }
+
+    Ok(())
+}
+
+/// Trait abstraction over "raw write to the wire" so the receive loop can
+/// be shared between plain-TCP (cloned `TcpStream`) and TLS (shared
+/// `Arc<Mutex<MasterStream>>`) without duplicating the protocol logic.
+trait RawWrite {
+    fn write_raw(&mut self, frame: &[u8]) -> std::io::Result<()>;
+}
+
+impl RawWrite for TcpStream {
+    fn write_raw(&mut self, frame: &[u8]) -> std::io::Result<()> {
+        self.write_all(frame)
+    }
+}
+
+struct TlsWriter<'a>(&'a Arc<std::sync::Mutex<MasterStream>>);
+
+impl<'a> RawWrite for TlsWriter<'a> {
+    fn write_raw(&mut self, frame: &[u8]) -> std::io::Result<()> {
+        let mut locked = self
+            .0
+            .lock()
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "stream mutex poisoned"))?;
+        locked.write_all(frame)
     }
 }
 
@@ -932,7 +1264,8 @@ fn receive_loop(
     log_collector: Option<Arc<LogCollector>>,
     shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
     state_tx: tokio::sync::watch::Sender<MasterState>,
-    seq: Arc<std::sync::Mutex<SeqNumbers>>,
+    protocol: Arc<std::sync::Mutex<ProtocolState>>,
+    ack_notify: Arc<tokio::sync::Notify>,
     control_tx: tokio::sync::broadcast::Sender<ControlResponse>,
 ) {
     let mut reassembly_buf = Vec::with_capacity(65536);
@@ -943,7 +1276,13 @@ fn receive_loop(
             break;
         }
 
-        let n = match stream.read(&mut read_buf) {
+        // Tick timers every iteration regardless of read result so t1/t2/t3
+        // fire even on a totally idle link.
+        if !tick_timers(&protocol, &log_collector, &ack_notify, &mut stream, &state_tx, &shutdown_flag) {
+            break;
+        }
+
+        match stream.read(&mut read_buf) {
             Ok(0) => {
                 state_tx.send_replace(MasterState::Disconnected);
                 if let Some(ref lc) = log_collector {
@@ -951,9 +1290,11 @@ fn receive_loop(
                 }
                 break;
             }
-            Ok(n) => n,
+            Ok(n) => {
+                reassembly_buf.extend_from_slice(&read_buf[..n]);
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                || e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) => {
                 state_tx.send_replace(MasterState::Disconnected);
                 if let Some(ref lc) = log_collector {
@@ -961,23 +1302,19 @@ fn receive_loop(
                 }
                 break;
             }
-        };
+        }
 
-        reassembly_buf.extend_from_slice(&read_buf[..n]);
-
-        // Extract complete frames from the reassembly buffer
         while reassembly_buf.len() >= 2 {
-            // Find the start byte 0x68
             if reassembly_buf[0] != 0x68 {
                 reassembly_buf.remove(0);
                 continue;
             }
             let frame_len = reassembly_buf[1] as usize + 2;
             if reassembly_buf.len() < frame_len {
-                break; // Wait for more data
+                break;
             }
             let frame_data: Vec<u8> = reassembly_buf.drain(..frame_len).collect();
-            process_received_frame(&frame_data, &received_data, &log_collector, &mut stream, &seq, &control_tx);
+            process_received_frame(&frame_data, &received_data, &log_collector, &mut stream, &protocol, &ack_notify, &control_tx);
         }
     }
 }
@@ -1002,13 +1339,10 @@ fn receive_loop_mutex(
     log_collector: Option<Arc<LogCollector>>,
     shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
     state_tx: tokio::sync::watch::Sender<MasterState>,
-    seq: Arc<std::sync::Mutex<SeqNumbers>>,
+    protocol: Arc<std::sync::Mutex<ProtocolState>>,
+    ack_notify: Arc<tokio::sync::Notify>,
     control_tx: tokio::sync::broadcast::Sender<ControlResponse>,
 ) {
-    // Switch the underlying TcpStream to non-blocking AFTER the TLS
-    // handshake (which happened during `connect()` while the stream was
-    // still blocking). From here on, `MasterStream::read` returns
-    // `WouldBlock` instead of parking the thread holding the mutex.
     if let Ok(locked) = stream.lock() {
         if let MasterStream::Tls(tls) = &*locked {
             let _ = tls.get_ref().set_nonblocking(true);
@@ -1021,6 +1355,15 @@ fn receive_loop_mutex(
     loop {
         if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
             break;
+        }
+
+        // Tick timers; uses TlsWriter so any t2/t3-driven send goes via
+        // the same mutex as user sends.
+        {
+            let mut writer = TlsWriter(&stream);
+            if !tick_timers(&protocol, &log_collector, &ack_notify, &mut writer, &state_tx, &shutdown_flag) {
+                break;
+            }
         }
 
         let read_result = {
@@ -1054,14 +1397,13 @@ fn receive_loop_mutex(
                         break;
                     }
                     let frame_data: Vec<u8> = reassembly_buf.drain(..frame_len).collect();
-                    process_received_frame_mutex(&frame_data, &received_data, &log_collector, &stream, &seq, &control_tx);
+                    let mut writer = TlsWriter(&stream);
+                    process_received_frame(&frame_data, &received_data, &log_collector, &mut writer, &protocol, &ack_notify, &control_tx);
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.kind() == std::io::ErrorKind::TimedOut => {
-                // No data available. Yield so a waiting sender can grab the
-                // mutex; std::sync::Mutex isn't fair, so an explicit sleep
-                // beats spin-locking the contention.
+                // Release the mutex briefly so a waiting sender can run.
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
             Err(e) => {
@@ -1075,81 +1417,235 @@ fn receive_loop_mutex(
     }
 }
 
-/// Process a single received IEC 104 frame (plain TCP version).
-fn process_received_frame(
+#[derive(Debug, Clone, Copy)]
+enum TickAction {
+    SendSFrame(u16),
+    SendTestFr,
+    DropT1,
+    Idle,
+}
+
+/// Run one tick of the t1/t2/t3 timer machinery. Returns false if the
+/// connection must die.
+///
+/// **Liveness semantics (TESTFR-driven):** `pending_acks` is *not* used as a
+/// drop trigger — many real-world IEC 104 slaves leave their N(R) stuck for
+/// long periods after a GI cycle yet are still perfectly responsive. The
+/// spec's strict per-I-frame t1 would tear those links down for no good
+/// reason. Liveness is instead handled by the t3 + t1 + TESTFR loop:
+///
+/// 1. Peer silent for ≥ t3 → master sends TESTFR ACT and arms
+///    `test_pending_deadline = now + t1`.
+/// 2. Any frame received (TESTFR_CON or anything else) clears the deadline
+///    via `process_received_frame` — link is alive.
+/// 3. Deadline elapses with no peer activity at all → drop.
+///
+/// `pending_acks` is still tracked for k-window blocking on the send side,
+/// but it does not by itself cause a disconnect.
+fn tick_timers<W: RawWrite>(
+    protocol: &Arc<std::sync::Mutex<ProtocolState>>,
+    log_collector: &Option<Arc<LogCollector>>,
+    _ack_notify: &Arc<tokio::sync::Notify>,
+    writer: &mut W,
+    state_tx: &tokio::sync::watch::Sender<MasterState>,
+    shutdown_flag: &Arc<std::sync::atomic::AtomicBool>,
+) -> bool {
+    let now = std::time::Instant::now();
+    let action = {
+        let mut s = protocol.lock().unwrap();
+        // Drop only when TESTFR ACT was sent and the peer didn't respond
+        // with anything within t1.
+        let testfr_dead = s
+            .test_pending_deadline
+            .map(|d| now >= d)
+            .unwrap_or(false);
+        if testfr_dead {
+            TickAction::DropT1
+        } else {
+            decide_tick(&mut s, now)
+        }
+    };
+
+    match action {
+        TickAction::DropT1 => {
+            shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            state_tx.send_replace(MasterState::Error);
+            if let Some(ref lc) = log_collector {
+                lc.try_add(LogEntry::new(
+                    Direction::Rx,
+                    FrameLabel::ConnectionEvent,
+                    "t1 超时: TESTFR ACT 后对端在 t1 内仍无任何响应,链路视为已死,连接关闭",
+                ));
+            }
+            false
+        }
+        TickAction::SendSFrame(rsn) => {
+            let rsn_bytes = (rsn << 1).to_le_bytes();
+            let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
+            let _ = writer.write_raw(&s_frame);
+            if let Some(ref lc) = log_collector {
+                lc.try_add(LogEntry::with_raw_bytes(
+                    Direction::Tx,
+                    FrameLabel::SFrame,
+                    format!("S 帧 (t2 触发的 ACK) RSN={}", rsn),
+                    s_frame.to_vec(),
+                ));
+            }
+            true
+        }
+        TickAction::SendTestFr => {
+            let f = [0x68, 0x04, 0x43, 0x00, 0x00, 0x00];
+            let _ = writer.write_raw(&f);
+            if let Some(ref lc) = log_collector {
+                lc.try_add(LogEntry::with_raw_bytes(
+                    Direction::Tx,
+                    FrameLabel::UTestAct,
+                    "TESTFR ACT (t3 触发心跳)",
+                    f.to_vec(),
+                ));
+            }
+            true
+        }
+        TickAction::Idle => true,
+    }
+}
+
+/// Decide which timer fires next, with the protocol lock already held.
+///
+/// Drop on TESTFR timeout is handled in `tick_timers`; here we only emit
+/// new outgoing frames (S-frame for delayed ACK, TESTFR ACT for idle).
+fn decide_tick(s: &mut ProtocolState, now: std::time::Instant) -> TickAction {
+    if let Some(deadline) = s.pending_ack_deadline {
+        if now >= deadline {
+            let rsn = s.rsn;
+            s.unacked_received = 0;
+            s.pending_ack_deadline = None;
+            return TickAction::SendSFrame(rsn);
+        }
+    }
+    if s.test_pending_deadline.is_none() && now.saturating_duration_since(s.last_rx) >= s.t3 {
+        s.test_pending_deadline = Some(now + s.t1);
+        return TickAction::SendTestFr;
+    }
+    TickAction::Idle
+}
+
+/// Process a single received IEC 104 frame, updating protocol state,
+/// emitting S-frame ACKs when w is reached, and handling U-frames.
+fn process_received_frame<W: RawWrite>(
     data: &[u8],
     received_data: &SharedReceivedData,
     log_collector: &Option<Arc<LogCollector>>,
-    stream: &mut TcpStream,
-    seq: &Arc<std::sync::Mutex<SeqNumbers>>,
+    writer: &mut W,
+    protocol: &Arc<std::sync::Mutex<ProtocolState>>,
+    ack_notify: &Arc<tokio::sync::Notify>,
     control_tx: &tokio::sync::broadcast::Sender<ControlResponse>,
 ) {
     if data.len() < 6 { return; }
     let ctrl1 = data[2];
+    let now = std::time::Instant::now();
 
-    // U-frame (bits 0,1 both set)
+    // Any received frame counts as link liveness: refresh the t3 idle
+    // baseline and clear any in-flight TESTFR deadline. Even an unrelated
+    // I-frame proves the peer is alive, so the watchdog should not fire.
+    {
+        let mut s = protocol.lock().unwrap();
+        s.last_rx = now;
+        s.test_pending_deadline = None;
+    }
+
+    // U-frame
     if ctrl1 & 0x03 == 0x03 {
         log_frame(data, log_collector);
         if ctrl1 == 0x43 {
             // TESTFR ACT → reply with TESTFR CON
             let response = [0x68, 0x04, 0x83, 0x00, 0x00, 0x00];
-            let _ = stream.write_all(&response);
+            let _ = writer.write_raw(&response);
+        } else if ctrl1 == 0x83 {
+            // TESTFR CON — clear the in-flight TESTFR deadline.
+            let mut s = protocol.lock().unwrap();
+            s.test_pending_deadline = None;
         }
+        // Other U-frames (STARTDT_CON 0x0B, STOPDT_CON 0x23) — nothing to track.
     }
-    // S-frame (bit 0 = 1, bit 1 = 0) — just an acknowledgment, nothing to do
+    // S-frame
     else if ctrl1 & 0x01 == 0x01 {
         log_frame(data, log_collector);
+        if data.len() >= 6 {
+            let peer_rsn = u16::from_le_bytes([data[4], data[5]]) >> 1;
+            free_acked_pending(protocol, peer_rsn, ack_notify);
+        }
     }
-    // I-frame (bit 0 = 0)
+    // I-frame
     else if ctrl1 & 0x01 == 0 && data.len() >= 12 {
-        // Increment RSN for each received I-frame
-        let rsn = {
-            let mut s = seq.lock().unwrap();
-            s.rsn = s.rsn.wrapping_add(1);
-            s.rsn
+        // Parse peer's SSN (data[2..4] >> 1) and the piggybacked RSN
+        // (data[4..6] >> 1) before consuming the ASDU.
+        let peer_ssn = u16::from_le_bytes([data[2], data[3]]) >> 1;
+        let peer_rsn = u16::from_le_bytes([data[4], data[5]]) >> 1;
+        free_acked_pending(protocol, peer_rsn, ack_notify);
+
+        // Update local rsn, increment unacked_received, and decide if w
+        // forces an immediate S-frame ACK.
+        let force_ack: Option<u16> = {
+            let mut s = protocol.lock().unwrap();
+            // V(R) <- N(S) + 1 per IEC 60870-5-104. If the peer's SSN
+            // doesn't match V(R) we still advance — log for diagnostics
+            // but don't hard-fail (some non-conformant slaves restart).
+            s.rsn = seq_inc(peer_ssn);
+            s.unacked_received = s.unacked_received.saturating_add(1);
+            if s.unacked_received >= s.w {
+                let rsn = s.rsn;
+                s.unacked_received = 0;
+                s.pending_ack_deadline = None;
+                Some(rsn)
+            } else {
+                if s.pending_ack_deadline.is_none() {
+                    s.pending_ack_deadline = Some(now + s.t2);
+                }
+                None
+            }
         };
+
         parse_and_store_asdu(data, received_data, log_collector, control_tx);
-        // Send S-frame with current RSN to acknowledge
-        let rsn_bytes = (rsn << 1).to_le_bytes();
-        let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
-        let _ = stream.write_all(&s_frame);
+
+        if let Some(rsn) = force_ack {
+            let rsn_bytes = (rsn << 1).to_le_bytes();
+            let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
+            let _ = writer.write_raw(&s_frame);
+            if let Some(ref lc) = log_collector {
+                lc.try_add(LogEntry::with_raw_bytes(
+                    Direction::Tx,
+                    FrameLabel::SFrame,
+                    format!("S 帧 (w 阈值触发) RSN={}", rsn),
+                    s_frame.to_vec(),
+                ));
+            }
+        }
     }
 }
 
-/// Process a single received IEC 104 frame (TLS/Mutex version).
-fn process_received_frame_mutex(
-    data: &[u8],
-    received_data: &SharedReceivedData,
-    log_collector: &Option<Arc<LogCollector>>,
-    stream: &Arc<std::sync::Mutex<MasterStream>>,
-    seq: &Arc<std::sync::Mutex<SeqNumbers>>,
-    control_tx: &tokio::sync::broadcast::Sender<ControlResponse>,
+/// Pop pending I-frame entries acknowledged by `peer_rsn` (anything with
+/// SSN < peer_rsn modulo 2^15). Notifies senders if any slot was freed.
+fn free_acked_pending(
+    protocol: &Arc<std::sync::Mutex<ProtocolState>>,
+    peer_rsn: u16,
+    ack_notify: &Arc<tokio::sync::Notify>,
 ) {
-    if data.len() < 6 { return; }
-    let ctrl1 = data[2];
-
-    if ctrl1 & 0x03 == 0x03 {
-        log_frame(data, log_collector);
-        if ctrl1 == 0x43 {
-            let response = [0x68, 0x04, 0x83, 0x00, 0x00, 0x00];
-            if let Ok(mut locked) = stream.lock() {
-                let _ = locked.write_all(&response);
+    let freed = {
+        let mut s = protocol.lock().unwrap();
+        let mut count = 0;
+        while let Some(&(ssn, _)) = s.pending_acks.front() {
+            if seq_lt(ssn, peer_rsn) {
+                s.pending_acks.pop_front();
+                count += 1;
+            } else {
+                break;
             }
         }
-    } else if ctrl1 & 0x01 == 0x01 {
-        log_frame(data, log_collector);
-    } else if ctrl1 & 0x01 == 0 && data.len() >= 12 {
-        let rsn = {
-            let mut s = seq.lock().unwrap();
-            s.rsn = s.rsn.wrapping_add(1);
-            s.rsn
-        };
-        parse_and_store_asdu(data, received_data, log_collector, control_tx);
-        let rsn_bytes = (rsn << 1).to_le_bytes();
-        let s_frame = [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]];
-        if let Ok(mut locked) = stream.lock() {
-            let _ = locked.write_all(&s_frame);
-        }
+        count
+    };
+    if freed > 0 {
+        ack_notify.notify_waiters();
     }
 }
 
@@ -1359,7 +1855,7 @@ fn parse_and_store_asdu(
 
 // --- Command frame builders ---
 
-fn build_gi_command(ca: u16) -> Vec<u8> {
+fn build_gi_command(ca: u16, qoi: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     vec![
         0x68, 0x0E,
@@ -1367,7 +1863,7 @@ fn build_gi_command(ca: u16) -> Vec<u8> {
         100, 0x01, 6, 0x00,
         ca_bytes[0], ca_bytes[1],
         0x00, 0x00, 0x00,
-        0x14,
+        qoi,
     ]
 }
 
@@ -1393,7 +1889,7 @@ fn build_clock_sync_command(ca: u16) -> Vec<u8> {
     ]
 }
 
-fn build_counter_read_command(ca: u16) -> Vec<u8> {
+fn build_counter_read_command(ca: u16, qcc: u8) -> Vec<u8> {
     let ca_bytes = ca.to_le_bytes();
     vec![
         0x68, 0x0E,
@@ -1401,7 +1897,7 @@ fn build_counter_read_command(ca: u16) -> Vec<u8> {
         101, 0x01, 6, 0x00,
         ca_bytes[0], ca_bytes[1],
         0x00, 0x00, 0x00,
-        0x05,
+        qcc,
     ]
 }
 
@@ -1585,10 +2081,71 @@ mod tests {
 
     #[test]
     fn test_build_gi_command() {
-        let frame = build_gi_command(1);
+        let frame = build_gi_command(1, 0x14);
         assert_eq!(frame[0], 0x68);
         assert_eq!(frame[6], 100);
         assert_eq!(frame[8], 6);
+        assert_eq!(frame[15], 0x14);
+    }
+
+    #[test]
+    fn test_build_gi_command_custom_qoi() {
+        // QOI=21 (group 1 interrogation)
+        let frame = build_gi_command(2, 21);
+        assert_eq!(frame[15], 21);
+        assert_eq!(frame[10], 2u16.to_le_bytes()[0]);
+    }
+
+    #[test]
+    fn test_build_counter_read_command_custom_qcc() {
+        // QCC=0x45 = total + freeze (group 1)
+        let frame = build_counter_read_command(1, 0x45);
+        assert_eq!(frame[6], 101);
+        assert_eq!(frame[15], 0x45);
+    }
+
+    #[test]
+    fn test_seq_lt_wraparound() {
+        // Within window
+        assert!(seq_lt(0, 1));
+        assert!(seq_lt(100, 200));
+        assert!(!seq_lt(1, 0));
+        // Equal is not strictly less than
+        assert!(!seq_lt(5, 5));
+        // Wrap: 32767 -> 0 should be "less than" because diff=1
+        assert!(seq_lt(32767, 0));
+        assert!(seq_lt(32766, 1));
+    }
+
+    #[test]
+    fn test_seq_inc_wraparound() {
+        assert_eq!(seq_inc(0), 1);
+        assert_eq!(seq_inc(32767), 0);
+    }
+
+    #[test]
+    fn test_master_config_protocol_defaults() {
+        let cfg = MasterConfig::default();
+        assert_eq!(cfg.t0, 30);
+        assert_eq!(cfg.t1, 15);
+        assert_eq!(cfg.t2, 10);
+        assert_eq!(cfg.t3, 20);
+        assert_eq!(cfg.k, 12);
+        assert_eq!(cfg.w, 8);
+        assert_eq!(cfg.default_qoi, 20);
+        assert_eq!(cfg.default_qcc, 5);
+        assert_eq!(cfg.interrogate_period_s, 0);
+        assert_eq!(cfg.counter_interrogate_period_s, 0);
+    }
+
+    #[test]
+    fn test_master_config_serde_back_compat() {
+        // Old configs without the new protocol fields must still deserialize.
+        let json = r#"{"target_address":"127.0.0.1","port":2404,"common_address":1,"timeout_ms":3000}"#;
+        let cfg: MasterConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.t1, 15); // pulled from default_t1
+        assert_eq!(cfg.k, 12);
+        assert_eq!(cfg.default_qoi, 20);
     }
 
     #[test]
