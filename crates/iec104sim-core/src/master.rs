@@ -876,8 +876,25 @@ impl MasterConnection {
         if let Some(ref mutex) = self.tls_stream_mutex {
             let mut stream = mutex.lock()
                 .map_err(|e| MasterError::SendError(format!("mutex lock failed: {}", e)))?;
-            stream.write_all(&frame)
-                .map_err(|e| MasterError::SendError(format!("{}: {}", detail, e)))?;
+            // The receive loop puts the underlying TCP stream in non-blocking
+            // mode, so writes can return WouldBlock if the kernel send buffer
+            // is momentarily full. Retry briefly — IEC 104 frames are tiny so
+            // this almost never loops more than once.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut written = 0;
+            while written < frame.len() {
+                match stream.write(&frame[written..]) {
+                    Ok(0) => return Err(MasterError::SendError(format!("{}: write returned 0", detail))),
+                    Ok(n) => written += n,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return Err(MasterError::SendError(format!("{}: write timed out", detail)));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(e) => return Err(MasterError::SendError(format!("{}: {}", detail, e))),
+                }
+            }
         } else {
             let stream_guard = self.stream.read().await;
             let stream = stream_guard.as_ref()
@@ -966,6 +983,19 @@ fn receive_loop(
 }
 
 /// Background receive loop for TLS connections using a shared Mutex.
+///
+/// TLS streams can't be split for concurrent read+write the way `TcpStream`
+/// can, so we serialize access via `Arc<Mutex<MasterStream>>`. Holding the
+/// lock across a blocking `read()` would block every send for as long as the
+/// peer stays silent — and `native_tls` does not reliably propagate the
+/// underlying TCP `set_read_timeout` (especially on macOS Security
+/// Framework), so the lock could end up held for many seconds.
+///
+/// The fix: switch the underlying TCP socket to non-blocking after the TLS
+/// handshake completes. `read()` then returns `WouldBlock` immediately when
+/// no data is available, we release the lock, sleep briefly, and retry. This
+/// caps the worst-case `send_frame` latency at roughly the sleep interval
+/// (~5 ms) instead of seconds.
 fn receive_loop_mutex(
     stream: Arc<std::sync::Mutex<MasterStream>>,
     received_data: SharedReceivedData,
@@ -975,6 +1005,16 @@ fn receive_loop_mutex(
     seq: Arc<std::sync::Mutex<SeqNumbers>>,
     control_tx: tokio::sync::broadcast::Sender<ControlResponse>,
 ) {
+    // Switch the underlying TcpStream to non-blocking AFTER the TLS
+    // handshake (which happened during `connect()` while the stream was
+    // still blocking). From here on, `MasterStream::read` returns
+    // `WouldBlock` instead of parking the thread holding the mutex.
+    if let Ok(locked) = stream.lock() {
+        if let MasterStream::Tls(tls) = &*locked {
+            let _ = tls.get_ref().set_nonblocking(true);
+        }
+    }
+
     let mut reassembly_buf = Vec::with_capacity(65536);
     let mut read_buf = [0u8; 8192];
 
@@ -983,7 +1023,7 @@ fn receive_loop_mutex(
             break;
         }
 
-        let n = {
+        let read_result = {
             let mut locked = match stream.lock() {
                 Ok(s) => s,
                 Err(_) => {
@@ -991,40 +1031,46 @@ fn receive_loop_mutex(
                     break;
                 }
             };
-            match locked.read(&mut read_buf) {
-                Ok(0) => {
-                    state_tx.send_replace(MasterState::Disconnected);
-                    if let Some(ref lc) = log_collector {
-                        lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, "连接已关闭"));
-                    }
-                    break;
-                }
-                Ok(n) => n,
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
-                    || e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                Err(e) => {
-                    state_tx.send_replace(MasterState::Disconnected);
-                    if let Some(ref lc) = log_collector {
-                        lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, format!("读取错误,连接断开: {}", e)));
-                    }
-                    break;
-                }
-            }
+            locked.read(&mut read_buf)
         };
 
-        reassembly_buf.extend_from_slice(&read_buf[..n]);
-
-        while reassembly_buf.len() >= 2 {
-            if reassembly_buf[0] != 0x68 {
-                reassembly_buf.remove(0);
-                continue;
-            }
-            let frame_len = reassembly_buf[1] as usize + 2;
-            if reassembly_buf.len() < frame_len {
+        match read_result {
+            Ok(0) => {
+                state_tx.send_replace(MasterState::Disconnected);
+                if let Some(ref lc) = log_collector {
+                    lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, "连接已关闭"));
+                }
                 break;
             }
-            let frame_data: Vec<u8> = reassembly_buf.drain(..frame_len).collect();
-            process_received_frame_mutex(&frame_data, &received_data, &log_collector, &stream, &seq, &control_tx);
+            Ok(n) => {
+                reassembly_buf.extend_from_slice(&read_buf[..n]);
+                while reassembly_buf.len() >= 2 {
+                    if reassembly_buf[0] != 0x68 {
+                        reassembly_buf.remove(0);
+                        continue;
+                    }
+                    let frame_len = reassembly_buf[1] as usize + 2;
+                    if reassembly_buf.len() < frame_len {
+                        break;
+                    }
+                    let frame_data: Vec<u8> = reassembly_buf.drain(..frame_len).collect();
+                    process_received_frame_mutex(&frame_data, &received_data, &log_collector, &stream, &seq, &control_tx);
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut => {
+                // No data available. Yield so a waiting sender can grab the
+                // mutex; std::sync::Mutex isn't fair, so an explicit sleep
+                // beats spin-locking the contention.
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => {
+                state_tx.send_replace(MasterState::Disconnected);
+                if let Some(ref lc) = log_collector {
+                    lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, format!("读取错误,连接断开: {}", e)));
+                }
+                break;
+            }
         }
     }
 }

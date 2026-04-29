@@ -45,11 +45,12 @@ async fn test_single_command_writeback() {
     // Verify GI populated IOA=1
     {
         let data = master.received_data.read().await;
-        assert!(data.get(1, AsduTypeId::MSpNa1).is_some(), "IOA=1 should exist after GI");
+        let map = data.ca_map(1).expect("CA=1 map should exist after GI");
+        assert!(map.get(1, AsduTypeId::MSpNa1).is_some(), "IOA=1 should exist after GI");
     }
 
-    // Send single command: IOA=1, value=true, select=false (direct execute)
-    master.send_single_command(1, true, false, 1).await.unwrap();
+    // Send single command: IOA=1, value=true, select=false (direct execute), QU=0, COT=6 (activation)
+    master.send_single_command(1, true, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
     // Check slave memory was updated
@@ -64,7 +65,8 @@ async fn test_single_command_writeback() {
     // Check master received the spontaneous update (COT=3)
     {
         let data = master.received_data.read().await;
-        let point = data.get(1, AsduTypeId::MSpNa1).unwrap();
+        let map = data.ca_map(1).expect("CA=1 map should exist after writeback");
+        let point = map.get(1, AsduTypeId::MSpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::SinglePoint { value: true },
             "Master should see SinglePoint(true) via COT=3 writeback");
     }
@@ -103,8 +105,8 @@ async fn test_double_command_writeback() {
     master.send_interrogation(1).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
-    // IOA=3 is the first DoublePoint (2 SP + first DP)
-    master.send_double_command(3, 2, false, 1).await.unwrap();
+    // IOA=3 is the first DoublePoint (2 SP + first DP), QU=0, COT=6
+    master.send_double_command(3, 2, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
     {
@@ -116,7 +118,8 @@ async fn test_double_command_writeback() {
 
     {
         let data = master.received_data.read().await;
-        let point = data.get(3, AsduTypeId::MDpNa1).unwrap();
+        let map = data.ca_map(1).expect("CA=1 map should exist");
+        let point = map.get(3, AsduTypeId::MDpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::DoublePoint { value: 2 },
             "Master should see DP=2 via writeback");
     }
@@ -155,8 +158,8 @@ async fn test_setpoint_float_writeback() {
     master.send_interrogation(1).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
-    // IOA=13 is the first ShortFloat
-    master.send_setpoint_float(13, 42.5, false, 1).await.unwrap();
+    // IOA=13 is the first ShortFloat, QL=0, COT=6
+    master.send_setpoint_float(13, 42.5, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(2000)).await;
 
     {
@@ -168,7 +171,8 @@ async fn test_setpoint_float_writeback() {
 
     {
         let data = master.received_data.read().await;
-        let point = data.get(13, AsduTypeId::MMeNc1).unwrap();
+        let map = data.ca_map(1).expect("CA=1 map should exist");
+        let point = map.get(13, AsduTypeId::MMeNc1).unwrap();
         assert_eq!(point.value, DataPointValue::ShortFloat { value: 42.5 },
             "Master should see float=42.5 via writeback");
     }
@@ -285,8 +289,9 @@ async fn test_batch_add_then_gi() {
 
     {
         let data = master.received_data.read().await;
+        let map = data.ca_map(1).expect("CA=1 map should exist after GI");
         for ioa in 1u32..=10 {
-            let point = data.get(ioa, AsduTypeId::MMeNc1).unwrap_or_else(|| panic!("IOA={} should exist after GI", ioa));
+            let point = map.get(ioa, AsduTypeId::MMeNc1).unwrap_or_else(|| panic!("IOA={} should exist after GI", ioa));
             assert!(
                 matches!(point.value, DataPointValue::ShortFloat { .. }),
                 "IOA={} should be ShortFloat, got {:?}",
@@ -337,9 +342,10 @@ async fn test_batch_add_coexist_then_gi() {
     // Master should have received both types for IOA 1-5
     {
         let data = master.received_data.read().await;
+        let map = data.ca_map(1).expect("CA=1 map should exist after GI");
         for ioa in 1u32..=5 {
-            assert!(data.get(ioa, AsduTypeId::MSpNa1).is_some(), "IOA={} SP should exist after GI", ioa);
-            assert!(data.get(ioa, AsduTypeId::MMeNc1).is_some(), "IOA={} FL should exist after GI", ioa);
+            assert!(map.get(ioa, AsduTypeId::MSpNa1).is_some(), "IOA={} SP should exist after GI", ioa);
+            assert!(map.get(ioa, AsduTypeId::MMeNc1).is_some(), "IOA={} FL should exist after GI", ioa);
         }
     }
 

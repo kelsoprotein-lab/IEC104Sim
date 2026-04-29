@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, watch, type Ref } from 'vue'
+import { ref, computed, inject, onMounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry, ConnectionInfo } from '../types'
 import { useI18n } from '../i18n'
@@ -18,6 +18,8 @@ const emit = defineEmits<{
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 
 const logs = ref<LogEntry[]>([])
+// 倒序展示：最新条目在表格顶部，便于查看最近通讯
+const displayLogs = computed(() => logs.value.slice().reverse())
 const connectionList = ref<{ id: string; label: string }[]>([])
 const selectedConnId = ref('')
 let refreshTimer: number | null = null
@@ -263,7 +265,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, idx) in logs" :key="idx">
+          <tr v-for="(log, idx) in displayLogs" :key="idx">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', dirClass(log.direction)]">{{ formatDirection(log.direction) }}</td>
             <td :class="['col-frame', frameLabelClass(log.frame_label)]">{{ formatFrameLabel(log.frame_label) }}</td>

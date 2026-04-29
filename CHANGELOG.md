@@ -2,6 +2,41 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.5] - 2026-04-29
+
+### Highlights / 亮点
+
+- 📋 **通信日志大改版** / Communication log overhauled — 帧类型与时间格式跟随中英文切换;新增"传送原因 (COT)"列,把 `COT=3` 直接显示为"突发 / Spontaneous"等可读名称;面板顶部拖拽手柄可任意调高,持久化到 localStorage;最新条目自动置顶 / Frame label and time format follow zh/en switch; new "Cause" column decodes COT 1..47 into readable names; drag handle resizes the panel (saved to localStorage); newest entries on top.
+- ⚡ **主站 TLS 发送延迟修复** / TLS send latency fixed — TLS 接收循环改非阻塞,共享 mutex 不再被阻塞读卡死,命令发送从最坏数秒降到 ~5 ms / TLS receive loop switched to non-blocking; the shared mutex is no longer held across blocking reads, so command sends no longer wait seconds for the next quiet window — worst case ~5 ms.
+- 🚀 **大点位场景删除/切换不卡 UI** / No more UI freeze on heavy connections — 15 k+ 数据点的连接,点击"删除"立刻返回(后端异步析构);切换连接时 `selectedPoints` 改 shallowRef,Vue 不再 deep-proxy 卸载几万项;`refreshTree` 80 ms 防抖合并连续事件 / Delete returns immediately even with 15 k+ points (async drop in `tokio::spawn`); `selectedPoints` changed to `shallowRef` and `refreshTree` debounced (80 ms).
+- 🌑 **统一暗色滚动条** / Unified dark scrollbars — 覆盖 macOS"始终显示滚动条"系统设置下的白色 track / Custom `::-webkit-scrollbar` rules override the white track macOS shows when "Always show scrollbars" is on.
+
+### Added 新增
+
+- **通信日志**: 新增"传送原因 (COT)"列,优先取 `detail_event.payload.cot`,回退正则匹配 `COT=N`,通过 `log.cot.*` 字典翻译成中英文名称(覆盖 1..47 主要 COT) / New Cause column on the log table.
+- **通信日志**: 面板顶部新增 4 px 拖拽手柄;鼠标按下拖拽调整高度,clamp `[80, 70vh]`,松开后写 `localStorage` (`iec104.logPanel.height`) / Drag-to-resize handle on the log panel, persisted to localStorage.
+- **测试**: 新增 `crates/iec104sim-core/tests/tls_send_latency.rs` 验证 TLS 命令发送 P95 延迟回归不超过 5 ms / New `tls_send_latency.rs` end-to-end test asserts TLS command-send P95 stays under 5 ms.
+
+### Changed 改进
+
+- **通信日志**: 帧标签 (I/S/U/GI/CS/单点命令…) 与时间格式不再硬编码,完全走 i18n;切换中英文表格内容立即跟随 / Frame labels and time format are fully i18n-driven (no hardcoded strings).
+- **通信日志**: 表格倒序渲染 (`displayLogs = logs.reverse()`),最新条目在顶部 / Table rendered newest-first via a `computed` reverse view.
+- **主站后端**: TLS `receive_loop_mutex` 在 TLS 握手后把底层 `TcpStream` 切为非阻塞,读返回 `WouldBlock` 立刻释放 mutex 让发送拿到锁;原本读阻塞数秒的最坏情况降到 ~5 ms 轮询间隔 / `receive_loop_mutex` flips the underlying `TcpStream` to non-blocking after the TLS handshake.
+- **主站后端**: `delete_connection` 改为短锁 `HashMap::remove` (O(1)),立即释放写锁;`disconnect()` + 15 k+ HashMap 析构甩到 `tokio::spawn` 独立任务,不阻塞 Tauri 命令线程 / `delete_connection` does an O(1) `HashMap::remove`, then disconnects + drops in `tokio::spawn`.
+- **主站前端**: `selectedPoints` 改 `shallowRef`,Ctrl+A 全选 15 k 行后切连接清空不再触发 Vue deep-reactive 卸载 / `selectedPoints` switched to `shallowRef`.
+- **主站前端**: `refreshTree` 加 80 ms trailing-edge 防抖,`disconnect → delete → reconnect` 连续触发合并为单次 `list_connections` 调用 / `refreshTree` debounced at 80 ms.
+- **测试**: 多个 e2e (`control_e2e.rs` / `tls_e2e.rs` / `overlapping_ioa_interrogation.rs`) 适配 CA-aware API,通过 `data.ca_map(ca)` 取每个 CA 的 IOA 表 / Tests updated for the new CA-aware `received_data.ca_map(...)` API.
+
+### Fixed 修复
+
+- **主站**: TLS 模式下点击"断开"或发送命令时,等待数秒才响应 — 由共享 mutex 被阻塞读卡住,现已修复 / Disconnect/send commands no longer hang for seconds on TLS connections.
+- **主站**: 连接收到 15 k+ 数据点后点击"删除连接"按钮,UI 冻结 1–2 秒;现在立刻响应 / Deleting a connection with 15 k+ points no longer freezes the UI.
+- **主站**: 切换/删除连接清空 `selectedPoints` 时主线程被 Vue Proxy 卸载几万项卡住 / Switching connections no longer stalls the main thread due to deep reactivity teardown.
+
+### Internal 内部
+
+- `App.vue` `onUnmounted` 补 `clearTimeout(refreshTreePending)` 防止挂起的防抖 timer 阻止 GC / `App.vue` cleans up the debounce timer on unmount.
+
 ## [1.1.4] - 2026-04-28
 
 ### Highlights / 亮点

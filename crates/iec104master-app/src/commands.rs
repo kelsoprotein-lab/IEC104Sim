@@ -181,10 +181,18 @@ pub async fn delete_connection(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let mut connections = state.connections.write().await;
-    connections
-        .remove(&id)
-        .ok_or_else(|| format!("connection {} not found", id))?;
+    let mut conn_state = {
+        let mut connections = state.connections.write().await;
+        connections
+            .remove(&id)
+            .ok_or_else(|| format!("connection {} not found", id))?
+    };
+    // Disconnect + drop the per-connection caches (15k+ point HashMap, log
+    // buffer, receiver task) off the Tauri command thread. disconnect() has a
+    // 2s internal timeout, so the spawned task can't leak.
+    tokio::spawn(async move {
+        let _ = conn_state.connection.disconnect().await;
+    });
     Ok(())
 }
 

@@ -4,5 +4,5 @@ export const RELEASES_URL = 'https://github.com/Carl-Dai/IEC60870-5-104-Simulato
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '改进: 仓库已从 kelsoprotein-lab 迁移到 Carl-Dai, updater endpoint / About 链接全部指向新地址',
+  '本次版本主要更新主站, 子站随版本号同步发布, 无功能改动',
 ]

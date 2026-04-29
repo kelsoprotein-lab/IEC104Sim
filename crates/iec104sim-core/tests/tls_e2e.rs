@@ -30,120 +30,8 @@ fn check_tools_available() -> bool {
 // Module: cert_gen — Dynamic certificate generation with rcgen
 // =========================================================================
 
-mod cert_gen {
-    use std::path::{Path, PathBuf};
-
-    pub struct TestCerts {
-        pub ca_cert_pem: String,
-        pub server_cert_pem: String,
-        pub server_key_pem: String,
-        pub client_cert_pem: String,
-        pub client_key_pem: String,
-    }
-
-    pub struct CertPaths {
-        pub ca_cert: PathBuf,
-        pub server_cert: PathBuf,
-        pub server_key: PathBuf,
-        pub server_pkcs12: PathBuf,
-        pub client_cert: PathBuf,
-        pub client_key: PathBuf,
-        pub client_pkcs12: PathBuf,
-    }
-
-    /// PKCS#12 password used for all generated identities in tests.
-    pub const PKCS12_PASS: &str = "iec104test";
-
-    /// Generate a full certificate chain: CA -> Server + Client.
-    pub fn generate() -> TestCerts {
-        use rcgen::{
-            CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, BasicConstraints,
-            KeyUsagePurpose, SanType, KeyPair,
-        };
-
-        // --- CA certificate ---
-        let mut ca_params = CertificateParams::new(vec!["IEC104 Test CA".to_string()]).unwrap();
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-        ];
-        ca_params.distinguished_name.push(DnType::CommonName, "IEC104 Test CA");
-        let ca_key = KeyPair::generate().unwrap();
-        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
-
-        // --- Server certificate ---
-        let mut server_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
-        server_params.subject_alt_names = vec![
-            SanType::DnsName("localhost".try_into().unwrap()),
-            SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
-        ];
-        server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        server_params.distinguished_name.push(DnType::CommonName, "IEC104 Test Server");
-        let server_key = KeyPair::generate().unwrap();
-        let server_cert = server_params.signed_by(&server_key, &ca_cert, &ca_key).unwrap();
-
-        // --- Client certificate ---
-        let mut client_params = CertificateParams::new(vec!["IEC104 Test Client".to_string()]).unwrap();
-        client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-        client_params.distinguished_name.push(DnType::CommonName, "IEC104 Test Client");
-        let client_key = KeyPair::generate().unwrap();
-        let client_cert = client_params.signed_by(&client_key, &ca_cert, &ca_key).unwrap();
-
-        TestCerts {
-            ca_cert_pem: ca_cert.pem(),
-            server_cert_pem: server_cert.pem(),
-            server_key_pem: server_key.serialize_pem(),
-            client_cert_pem: client_cert.pem(),
-            client_key_pem: client_key.serialize_pem(),
-        }
-    }
-
-    /// Write all PEM files to the given directory and generate PKCS#12 bundles.
-    pub fn write_to_dir(certs: &TestCerts, dir: &Path) -> CertPaths {
-        let paths = CertPaths {
-            ca_cert: dir.join("ca.pem"),
-            server_cert: dir.join("server.pem"),
-            server_key: dir.join("server-key.pem"),
-            server_pkcs12: dir.join("server.p12"),
-            client_cert: dir.join("client.pem"),
-            client_key: dir.join("client-key.pem"),
-            client_pkcs12: dir.join("client.p12"),
-        };
-        std::fs::write(&paths.ca_cert, &certs.ca_cert_pem).unwrap();
-        std::fs::write(&paths.server_cert, &certs.server_cert_pem).unwrap();
-        std::fs::write(&paths.server_key, &certs.server_key_pem).unwrap();
-        std::fs::write(&paths.client_cert, &certs.client_cert_pem).unwrap();
-        std::fs::write(&paths.client_key, &certs.client_key_pem).unwrap();
-
-        // Generate PKCS#12 bundles via openssl CLI (required on macOS with native-tls
-        // because the Security framework cannot import ECDSA keys via from_pkcs8).
-        make_pkcs12(
-            &paths.server_cert, &paths.server_key, &paths.server_pkcs12, PKCS12_PASS,
-        );
-        make_pkcs12(
-            &paths.client_cert, &paths.client_key, &paths.client_pkcs12, PKCS12_PASS,
-        );
-
-        paths
-    }
-
-    fn make_pkcs12(cert: &Path, key: &Path, out: &Path, password: &str) {
-        // Try without -legacy first (modern PKCS#12, compatible with macOS Security framework).
-        // OpenSSL 3.x defaults to AES-256-CBC which macOS Security.framework supports.
-        let status = std::process::Command::new("openssl")
-            .args([
-                "pkcs12", "-export",
-                "-in",      cert.to_str().unwrap(),
-                "-inkey",   key.to_str().unwrap(),
-                "-out",     out.to_str().unwrap(),
-                "-passout", &format!("pass:{}", password),
-            ])
-            .status()
-            .expect("openssl not found — required for PKCS#12 generation");
-        assert!(status.success(), "openssl pkcs12 export failed");
-    }
-}
+mod common;
+use common::cert_gen;
 
 // =========================================================================
 // Verification test: cert generation
@@ -424,8 +312,9 @@ async fn run_protocol_checks(slave: &SlaveServer, master: &MasterConnection) {
 
     {
         let data = master.received_data.read().await;
-        assert!(data.get(100, AsduTypeId::MSpNa1).is_some(), "IOA=100 (SP) should exist after GI");
-        assert!(data.get(200, AsduTypeId::MMeNc1).is_some(), "IOA=200 (Float) should exist after GI");
+        let map = data.ca_map(1).expect("CA=1 map should exist after GI");
+        assert!(map.get(100, AsduTypeId::MSpNa1).is_some(), "IOA=100 (SP) should exist after GI");
+        assert!(map.get(200, AsduTypeId::MMeNc1).is_some(), "IOA=200 (Float) should exist after GI");
     }
 
     // --- 2. Spontaneous (Change-of-State) ---
@@ -440,13 +329,14 @@ async fn run_protocol_checks(slave: &SlaveServer, master: &MasterConnection) {
 
     {
         let data = master.received_data.read().await;
-        let point = data.get(100, AsduTypeId::MSpNa1).unwrap();
+        let map = data.ca_map(1).expect("CA=1 map should exist after spontaneous");
+        let point = map.get(100, AsduTypeId::MSpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::SinglePoint { value: true },
             "Master should receive spontaneous update: SP=true");
     }
 
-    // --- 3. Control Command (single point) ---
-    master.send_single_command(100, false, false, 1).await.unwrap();
+    // --- 3. Control Command (single point) — QU=0, COT=6 (activation) ---
+    master.send_single_command(100, false, false, 1, 0, 6).await.unwrap();
     sleep(Duration::from_millis(1000)).await;
 
     {
@@ -458,7 +348,8 @@ async fn run_protocol_checks(slave: &SlaveServer, master: &MasterConnection) {
 
     {
         let data = master.received_data.read().await;
-        let point = data.get(100, AsduTypeId::MSpNa1).unwrap();
+        let map = data.ca_map(1).expect("CA=1 map should exist after writeback");
+        let point = map.get(100, AsduTypeId::MSpNa1).unwrap();
         assert_eq!(point.value, DataPointValue::SinglePoint { value: false },
             "Master should see control writeback via COT=3");
     }

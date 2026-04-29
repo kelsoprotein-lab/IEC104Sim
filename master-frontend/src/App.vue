@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, provide, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import Toolbar from './components/Toolbar.vue'
@@ -19,7 +19,8 @@ const selectedConnectionState = ref<string>('Disconnected')
 // looking at? `null` means "all CAs combined" (legacy single-CA behaviour).
 const selectedCA = ref<number | null>(null)
 const selectedCategory = ref<string | null>(null)
-const selectedPoints = ref<ReceivedDataPointInfo[]>([])
+// shallowRef: 选中可达 15k+ 行（Ctrl+A）；deep ref 会在切换连接清空时卡几百 ms。
+const selectedPoints = shallowRef<ReceivedDataPointInfo[]>([])
 const logExpanded = ref(false)
 
 const LOG_H_KEY = 'iec104.logPanel.height'
@@ -73,8 +74,14 @@ provide('selectedPoints', selectedPoints)
 const treeRefreshKey = ref(0)
 provide('treeRefreshKey', treeRefreshKey)
 
+// 80ms 防抖：连续 connection-state 事件（disconnect→delete→reconnect）合并为一次重载。
+let refreshTreePending: number | null = null
 function refreshTree() {
-  treeRefreshKey.value++
+  if (refreshTreePending !== null) return
+  refreshTreePending = window.setTimeout(() => {
+    refreshTreePending = null
+    treeRefreshKey.value++
+  }, 80)
 }
 provide('refreshTree', refreshTree)
 
@@ -114,6 +121,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenConnState?.()
+  if (refreshTreePending !== null) {
+    clearTimeout(refreshTreePending)
+    refreshTreePending = null
+  }
 })
 
 function handleConnectionSelect(id: string, state: string) {

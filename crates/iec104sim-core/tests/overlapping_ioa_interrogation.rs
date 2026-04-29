@@ -79,10 +79,11 @@ async fn gi_then_ci_keeps_float_and_counter_at_same_ioa() {
     sleep(Duration::from_millis(1500)).await;
     {
         let data = master.received_data.read().await;
-        assert!(data.get(100, AsduTypeId::MMeNc1).is_some(), "float@100 missing after GI");
-        assert!(data.get(100, AsduTypeId::MItNa1).is_some(), "counter@100 missing after GI");
-        assert!(data.get(101, AsduTypeId::MMeNc1).is_some(), "float@101 missing after GI");
-        assert!(data.get(101, AsduTypeId::MItNa1).is_some(), "counter@101 missing after GI");
+        let map = data.ca_map(1).expect("CA=1 map missing after GI");
+        assert!(map.get(100, AsduTypeId::MMeNc1).is_some(), "float@100 missing after GI");
+        assert!(map.get(100, AsduTypeId::MItNa1).is_some(), "counter@100 missing after GI");
+        assert!(map.get(101, AsduTypeId::MMeNc1).is_some(), "float@101 missing after GI");
+        assert!(map.get(101, AsduTypeId::MItNa1).is_some(), "counter@101 missing after GI");
     }
 
     // 2) Counter Interrogation — must NOT evict float entries at the same IOAs.
@@ -90,11 +91,12 @@ async fn gi_then_ci_keeps_float_and_counter_at_same_ioa() {
     sleep(Duration::from_millis(1500)).await;
     {
         let data = master.received_data.read().await;
-        assert!(data.get(100, AsduTypeId::MItNa1).is_some(), "counter@100 missing after CI");
-        assert!(data.get(100, AsduTypeId::MMeNc1).is_some(),
+        let map = data.ca_map(1).expect("CA=1 map missing after CI");
+        assert!(map.get(100, AsduTypeId::MItNa1).is_some(), "counter@100 missing after CI");
+        assert!(map.get(100, AsduTypeId::MMeNc1).is_some(),
             "float@100 should still exist after CI — backend must key by (ioa, asdu_type)");
-        assert!(data.get(101, AsduTypeId::MItNa1).is_some(), "counter@101 missing after CI");
-        assert!(data.get(101, AsduTypeId::MMeNc1).is_some(), "float@101 should still exist after CI");
+        assert!(map.get(101, AsduTypeId::MItNa1).is_some(), "counter@101 missing after CI");
+        assert!(map.get(101, AsduTypeId::MMeNc1).is_some(), "float@101 should still exist after CI");
     }
 
     // 3) Another GI — must NOT evict counter entries either.
@@ -102,8 +104,9 @@ async fn gi_then_ci_keeps_float_and_counter_at_same_ioa() {
     sleep(Duration::from_millis(1500)).await;
     {
         let data = master.received_data.read().await;
-        assert!(data.get(100, AsduTypeId::MMeNc1).is_some(), "float@100 missing after GI#2");
-        assert!(data.get(100, AsduTypeId::MItNa1).is_some(),
+        let map = data.ca_map(1).expect("CA=1 map missing after GI#2");
+        assert!(map.get(100, AsduTypeId::MMeNc1).is_some(), "float@100 missing after GI#2");
+        assert!(map.get(100, AsduTypeId::MItNa1).is_some(),
             "counter@100 should still exist after GI#2");
     }
 
