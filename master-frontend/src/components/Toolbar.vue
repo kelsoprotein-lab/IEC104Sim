@@ -12,6 +12,7 @@ import type { ConnectionInfo } from '../types'
 const { t } = useI18n()
 
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
+const openParseFrame = inject<(prefill?: string) => void>('openParseFrame')!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
 const refreshTree = inject<() => void>('refreshTree')!
@@ -427,6 +428,14 @@ function protoLabel(f: ProtoField): string {
       </button>
       <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="openCustomControl">
         {{ t('toolbar.customControl') }}
+      </button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
+    <div class="toolbar-group">
+      <button class="toolbar-btn" @click="openParseFrame()">
+        {{ t('toolbar.parseFrame') }}
       </button>
     </div>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject, onMounted, watch, type Ref } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry, ConnectionInfo } from '../types'
 import { useI18n } from '../i18n'
@@ -16,6 +16,13 @@ const emit = defineEmits<{
 }>()
 
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
+const openParseFrame = inject<(prefill?: string) => void>('openParseFrame')!
+
+function onLogContextMenu(e: MouseEvent, log: LogEntry) {
+  if (!log.raw_bytes || log.raw_bytes.length === 0) return
+  e.preventDefault()
+  openParseFrame(formatRawBytes(log.raw_bytes))
+}
 
 const logs = ref<LogEntry[]>([])
 // 倒序展示：最新条目在表格顶部，便于查看最近通讯
@@ -23,6 +30,24 @@ const displayLogs = computed(() => logs.value.slice().reverse())
 const connectionList = ref<{ id: string; label: string }[]>([])
 const selectedConnId = ref('')
 let refreshTimer: number | null = null
+let activeLoggingId: string | null = null
+
+function setBackendLogging(connId: string, enabled: boolean): Promise<void> {
+  if (!connId) return Promise.resolve()
+  return invoke<void>('set_logging_enabled', { connectionId: connId, enabled })
+    .catch(() => { /* ignore */ })
+}
+
+async function syncLoggingState() {
+  const wanted = props.expanded ? selectedConnId.value || null : null
+  if (activeLoggingId === wanted) return
+  const prev = activeLoggingId
+  activeLoggingId = wanted
+  await Promise.all([
+    prev && prev !== wanted ? setBackendLogging(prev, false) : Promise.resolve(),
+    wanted ? setBackendLogging(wanted, true) : Promise.resolve(),
+  ])
+}
 
 async function loadConnections() {
   try {
@@ -218,19 +243,33 @@ watch(selectedConnectionId, (newId) => {
 watch(() => props.expanded, (expanded) => {
   if (expanded) {
     loadConnections()
+    syncLoggingState()
     loadLogs()
     startAutoRefresh()
   } else {
     stopAutoRefresh()
+    syncLoggingState()
   }
 })
 
-watch(selectedConnId, () => loadLogs())
+watch(selectedConnId, () => {
+  syncLoggingState()
+  loadLogs()
+})
 
 onMounted(async () => {
   await loadConnections()
+  await syncLoggingState()
   if (selectedConnId.value) await loadLogs()
   if (props.expanded) startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
+  if (activeLoggingId) {
+    setBackendLogging(activeLoggingId, false)
+    activeLoggingId = null
+  }
 })
 </script>
 
@@ -265,7 +304,10 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, idx) in displayLogs" :key="idx">
+          <tr v-for="(log, idx) in displayLogs" :key="idx"
+              :class="{ 'log-row-parsable': !!log.raw_bytes && log.raw_bytes.length > 0 }"
+              :title="log.raw_bytes && log.raw_bytes.length ? t('toolbar.parseFrameInLog') : ''"
+              @contextmenu="onLogContextMenu($event, log)">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', dirClass(log.direction)]">{{ formatDirection(log.direction) }}</td>
             <td :class="['col-frame', frameLabelClass(log.frame_label)]">{{ formatFrameLabel(log.frame_label) }}</td>

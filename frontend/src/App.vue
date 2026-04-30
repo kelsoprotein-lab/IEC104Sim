@@ -8,6 +8,7 @@ import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import AppDialog from './components/AppDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import ParseFrameDialog from './components/ParseFrameDialog.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
 
@@ -51,6 +52,15 @@ const categoryCounts = ref<Map<string, number>>(new Map())
 provide('categoryCounts', categoryCounts)
 provide(dialogKey, { showAlert, showConfirm, showPrompt })
 
+// Frame parser dialog (opened from Toolbar button or LogPanel right-click)
+const parseFrameVisible = ref(false)
+const parseFramePrefill = ref<string>('')
+function openParseFrame(prefill?: string) {
+  parseFramePrefill.value = prefill ?? ''
+  parseFrameVisible.value = true
+}
+provide('openParseFrame', openParseFrame)
+
 function handleServerSelect(id: string, state: string) {
   selectedServerId.value = id
   selectedServerState.value = state
@@ -83,20 +93,24 @@ function toggleLog() {
   logExpanded.value = !logExpanded.value
 }
 
-const updateMeta = ref<{ version: string; notes: string; pub_date?: string | null } | null>(null)
+type UpdateMeta = { version: string; notes: string; pub_date?: string | null }
+const updateMeta = ref<UpdateMeta | null>(null)
 const updateVisible = ref(false)
 
-async function checkUpdate() {
+async function checkUpdate(force = false): Promise<UpdateMeta | null> {
   try {
-    const meta = await invoke<{ version: string; notes: string; pub_date?: string | null } | null>('check_for_update')
+    const meta = await invoke<UpdateMeta | null>('check_for_update', { force })
     if (meta) {
       updateMeta.value = meta
       updateVisible.value = true
     }
+    return meta
   } catch (e) {
     console.warn('update check failed', e)
+    return null
   }
 }
+provide('checkUpdate', checkUpdate)
 
 // Backend pushes server-state-changed on every start/stop; without this the
 // toolbar buttons & tree dot drift out of sync when actions originate
@@ -111,7 +125,7 @@ onMounted(async () => {
     }
     refreshTree()
   })
-  setTimeout(checkUpdate, 2000)
+  setTimeout(() => checkUpdate(false), 2000)
 })
 
 onUnmounted(() => {
@@ -152,6 +166,11 @@ function snoozeUpdate() {
       <LogPanel :expanded="logExpanded" @toggle="toggleLog" />
     </footer>
     <AppDialog />
+    <ParseFrameDialog
+      :visible="parseFrameVisible"
+      :prefill="parseFramePrefill"
+      @close="parseFrameVisible = false"
+    />
     <UpdateDialog
       :visible="updateVisible"
       :version="updateMeta?.version ?? ''"

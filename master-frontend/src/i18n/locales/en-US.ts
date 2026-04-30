@@ -21,6 +21,8 @@ const dict: DictShape = {
     clockSync: 'Clock Sync',
     counterRead: 'Counter Read',
     customControl: 'Custom Control',
+    parseFrame: 'Parse Frame',
+    parseFrameInLog: 'Parse this frame',
     checkUpdate: 'Check for Updates',
     checkingUpdate: 'Checking…',
     alreadyLatest: 'You are on the latest version',

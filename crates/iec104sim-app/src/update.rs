@@ -35,12 +35,20 @@ fn parse_ts(s: Option<String>) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+// `force = true` (toolbar button) bypasses the 6h throttle and 24h snooze.
+// Startup auto-checks pass `force = None / false`.
 #[tauri::command]
-pub async fn check_for_update(app: AppHandle) -> Result<Option<UpdateMeta>, String> {
+pub async fn check_for_update(
+    app: AppHandle,
+    force: Option<bool>,
+) -> Result<Option<UpdateMeta>, String> {
+    let force = force.unwrap_or(false);
     let now = Utc::now();
-    let last = parse_ts(read_str(&app, KEY_LAST_CHECK));
-    if !should_check(last, now, Duration::hours(THROTTLE_HOURS)) {
-        return Ok(None);
+    if !force {
+        let last = parse_ts(read_str(&app, KEY_LAST_CHECK));
+        if !should_check(last, now, Duration::hours(THROTTLE_HOURS)) {
+            return Ok(None);
+        }
     }
     write_str(&app, KEY_LAST_CHECK, &now.to_rfc3339());
 
@@ -54,10 +62,12 @@ pub async fn check_for_update(app: AppHandle) -> Result<Option<UpdateMeta>, Stri
     };
     let Some(update) = update else { return Ok(None) };
 
-    let snoozed_v = read_str(&app, KEY_SNOOZED_VER);
-    let snoozed_u = parse_ts(read_str(&app, KEY_SNOOZED_UNTIL));
-    if is_snoozed(snoozed_v.as_deref(), snoozed_u, &update.version, now) {
-        return Ok(None);
+    if !force {
+        let snoozed_v = read_str(&app, KEY_SNOOZED_VER);
+        let snoozed_u = parse_ts(read_str(&app, KEY_SNOOZED_UNTIL));
+        if is_snoozed(snoozed_v.as_deref(), snoozed_u, &update.version, now) {
+            return Ok(None);
+        }
     }
 
     Ok(Some(UpdateMeta {

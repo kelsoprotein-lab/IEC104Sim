@@ -31,6 +31,11 @@ export type DictShape = {
     titleAddStation: string
     titleRandomMutation: string
     titleCyclicSend: string
+    checkUpdate: string
+    checkingUpdate: string
+    alreadyLatest: string
+    parseFrame: string
+    parseFrameInLog: string
   }
   newServer: {
     title: string
@@ -232,6 +237,11 @@ const dict: DictShape = {
     titleAddStation: '添加站',
     titleRandomMutation: '随机变化',
     titleCyclicSend: '周期发送',
+    checkUpdate: '检查更新',
+    checkingUpdate: '检查中…',
+    alreadyLatest: '已是最新版本',
+    parseFrame: '报文解析',
+    parseFrameInLog: '解析此报文',
   },
   newServer: {
     title: '新建服务器',

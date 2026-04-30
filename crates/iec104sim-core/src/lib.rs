@@ -7,3 +7,4 @@ pub mod log_entry;
 pub mod log_collector;
 pub mod config;
 pub mod tools;
+pub mod decode;

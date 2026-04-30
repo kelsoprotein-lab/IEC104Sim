@@ -16,6 +16,18 @@ const emit = defineEmits<{
 }>()
 
 const selectedServerId = inject<Ref<string | null>>('selectedServerId')!
+const openParseFrame = inject<(prefill?: string) => void>('openParseFrame')!
+
+function rawBytesHex(raw: number[] | null | undefined): string {
+  if (!raw) return ''
+  return raw.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')
+}
+
+function onLogContextMenu(e: MouseEvent, log: LogEntry) {
+  if (!log.raw_bytes || log.raw_bytes.length === 0) return
+  e.preventDefault()
+  openParseFrame(rawBytesHex(log.raw_bytes))
+}
 
 // shallowRef: 日志条目可达数千行，deep ref 在每次 invoke 全替换时
 // 会重建所有 Proxy，触发 v-for diff 全量重渲染（视觉上一闪一闪）。
@@ -188,7 +200,10 @@ onUnmounted(() => stopAutoRefresh())
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, idx) in displayLogs" :key="idx">
+          <tr v-for="(log, idx) in displayLogs" :key="idx"
+              :class="{ 'log-row-parsable': !!log.raw_bytes && log.raw_bytes.length > 0 }"
+              :title="log.raw_bytes && log.raw_bytes.length ? t('toolbar.parseFrameInLog') : ''"
+              @contextmenu="onLogContextMenu($event, log)">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', log.direction.toLowerCase()]">{{ log.direction }}</td>
             <td class="col-frame">{{ formatFrameLabel(log.frame_label) }}</td>

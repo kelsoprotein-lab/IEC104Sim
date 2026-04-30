@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionInfo } from '../types'
+import type { ConnectionInfo, ChangedCategoriesMap, CategoryCountsMap } from '../types'
 import { useI18n } from '../i18n'
 
 const { t } = useI18n()
@@ -19,28 +19,29 @@ const refreshTree = inject<() => void>('refreshTree')!
 // given connection id. Optional — if Toolbar isn't mounted (shouldn't happen
 // in this app), the menu item just no-ops.
 const openEditConnection = inject<((connId: string) => void) | null>('openEditConnection', null)
-const changedCategories = inject<Ref<Map<string, Set<string>>>>('changedCategories')!
-// connId -> Map<CA, Map<categoryLabel, count>>. CA = 0 is reserved for the
-// "all CAs combined" totals (used for the legacy single-CA case).
-const sharedCategoryCounts = inject<Ref<Map<string, Map<number, Map<string, number>>>>>('categoryCounts')!
+const changedCategories = inject<Ref<ChangedCategoriesMap>>('changedCategories')!
+const sharedCategoryCounts = inject<Ref<CategoryCountsMap>>('categoryCounts')!
 
-// Local flash state: keyed by "${connId}|${categoryLabel}" to keep flashes per-connection.
+// Flash key 用真实 (connId, ca, category) 三元组。single-CA 视图也能拿到唯一
+// CA (`conn.info.common_addresses[0]`),所以不需要 wildcard sentinel。
 const flashingCategories = ref<Set<string>>(new Set())
 const flashTimers = new Map<string, number>()
-const flashKey = (connId: string, cat: string) => `${connId}|${cat}`
+const flashKey = (connId: string, ca: number, cat: string) => `${connId}|${ca}|${cat}`
 
 watch(changedCategories, (map) => {
   if (map.size === 0) return
-  for (const [connId, cats] of map) {
-    for (const cat of cats) {
-      const key = flashKey(connId, cat)
-      flashingCategories.value.add(key)
-      const prev = flashTimers.get(key)
-      if (prev) clearTimeout(prev)
-      flashTimers.set(key, window.setTimeout(() => {
-        flashingCategories.value.delete(key)
-        flashTimers.delete(key)
-      }, 3000))
+  for (const [connId, byCa] of map) {
+    for (const [ca, cats] of byCa) {
+      for (const cat of cats) {
+        const key = flashKey(connId, ca, cat)
+        flashingCategories.value.add(key)
+        const prev = flashTimers.get(key)
+        if (prev) clearTimeout(prev)
+        flashTimers.set(key, window.setTimeout(() => {
+          flashingCategories.value.delete(key)
+          flashTimers.delete(key)
+        }, 3000))
+      }
     }
   }
   changedCategories.value = new Map()
@@ -232,7 +233,7 @@ function stateClass(state: string): string {
                 :key="`${ca}-${cat.key}`"
                 :class="['tree-node', 'tree-child', 'tree-grand', {
                   selected: selectedNodeId === `${conn.info.id}:ca:${ca}:${cat.key}`,
-                  'cat-flash': flashingCategories.has(flashKey(conn.info.id, cat.label)),
+                  'cat-flash': flashingCategories.has(flashKey(conn.info.id, ca, cat.label)),
                 }]"
                 @click="selectCategory(conn, cat, ca)"
               >
@@ -253,7 +254,7 @@ function stateClass(state: string): string {
             :key="cat.key"
             :class="['tree-node', 'tree-child', {
               selected: selectedNodeId === `${conn.info.id}:${cat.key}`,
-              'cat-flash': flashingCategories.has(flashKey(conn.info.id, cat.label)),
+              'cat-flash': flashingCategories.has(flashKey(conn.info.id, conn.info.common_addresses[0], cat.label)),
             }]"
             @click="selectCategory(conn, cat, null)"
           >

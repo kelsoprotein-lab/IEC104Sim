@@ -19,6 +19,21 @@ const { showAlert, showPrompt } = inject<{
   showAlert: typeof ShowAlert
   showPrompt: typeof ShowPrompt
 }>(dialogKey)!
+const openParseFrame = inject<(prefill?: string) => void>('openParseFrame')!
+
+type UpdateMeta = { version: string; notes: string; pub_date?: string | null }
+const checkUpdate = inject<(force?: boolean) => Promise<UpdateMeta | null>>('checkUpdate')!
+const updateChecking = ref(false)
+async function manualCheckUpdate() {
+  if (updateChecking.value) return
+  updateChecking.value = true
+  try {
+    const meta = await checkUpdate(true)
+    if (!meta) await showAlert(t('toolbar.alreadyLatest'))
+  } finally {
+    updateChecking.value = false
+  }
+}
 
 // --- New Server Modal ---
 const showNewServerModal = ref(false)
@@ -287,6 +302,15 @@ watch([selectedServerId, selectedCA], () => {
       />
       <span class="rate-label">ms</span>
     </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" @click="openParseFrame()" :title="t('toolbar.parseFrame')">
+        <span class="toolbar-label">{{ t('toolbar.parseFrame') }}</span>
+      </button>
+    </div>
+    <button class="toolbar-btn toolbar-btn-update" :disabled="updateChecking" @click="manualCheckUpdate">
+      {{ updateChecking ? t('toolbar.checkingUpdate') : t('toolbar.checkUpdate') }}
+    </button>
     <LangSwitch />
     <button class="toolbar-title as-button" @click="showAbout = true" :title="t('toolbar.about')">{{ t('toolbar.appTitle') }}</button>
   </div>
@@ -487,8 +511,11 @@ watch([selectedServerId, selectedCA], () => {
   font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
-.toolbar-title {
+.toolbar-btn-update {
   margin-left: auto;
+}
+
+.toolbar-title {
   font-size: 12px;
   color: #6c7086;
   padding-right: 8px;

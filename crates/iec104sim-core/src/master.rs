@@ -8,6 +8,13 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// 取出"启用中"的 LogCollector,否则返回 None。日志面板未打开时返回 None,
+/// 调用方据此整段跳过 `format!()` 等字符串构造。
+#[inline]
+fn active_lc(lc: &Option<Arc<LogCollector>>) -> Option<&Arc<LogCollector>> {
+    lc.as_ref().filter(|l| l.is_enabled())
+}
+
 /// A control command response received from the slave.
 #[derive(Debug, Clone)]
 pub struct ControlResponse {
@@ -508,7 +515,7 @@ impl MasterConnection {
 
         // Wrap with TLS if configured
         let master_stream = if self.config.tls.enabled {
-            if let Some(ref lc) = self.log_collector {
+            if let Some(lc) = active_lc(&self.log_collector) {
                 lc.try_add(LogEntry::new(
                     Direction::Tx,
                     FrameLabel::ConnectionEvent,
@@ -518,7 +525,7 @@ impl MasterConnection {
 
             let tls_stream = self.create_tls_stream(tcp_stream)?;
 
-            if let Some(ref lc) = self.log_collector {
+            if let Some(lc) = active_lc(&self.log_collector) {
                 lc.try_add(LogEntry::new(
                     Direction::Rx,
                     FrameLabel::ConnectionEvent,
@@ -546,7 +553,7 @@ impl MasterConnection {
             }
         }
 
-        if let Some(ref lc) = self.log_collector {
+        if let Some(lc) = active_lc(&self.log_collector) {
             lc.try_add(LogEntry::with_raw_bytes(
                 Direction::Tx,
                 FrameLabel::UStartAct,
@@ -619,7 +626,7 @@ impl MasterConnection {
             self.receiver_handle = Some(handle);
         }
 
-        if let Some(ref lc) = self.log_collector {
+        if let Some(lc) = active_lc(&self.log_collector) {
             lc.try_add(LogEntry::new(
                 Direction::Rx,
                 FrameLabel::ConnectionEvent,
@@ -827,7 +834,7 @@ impl MasterConnection {
         self.tls_stream_mutex = None;
         self.state_tx.send_replace(MasterState::Disconnected);
 
-        if let Some(ref lc) = self.log_collector {
+        if let Some(lc) = active_lc(&self.log_collector) {
             lc.try_add(LogEntry::new(
                 Direction::Tx,
                 FrameLabel::ConnectionEvent,
@@ -1005,7 +1012,7 @@ impl MasterConnection {
         self.send_frame_with_event(&select_frame, &format!("{} (Select)", detail_prefix), label.clone(), ca, phase_event("select")).await?;
         steps.push(ControlStep {
             action: "select_sent".to_string(),
-            timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         });
 
         // Step 2: Wait for Select confirmation (COT=7)
@@ -1021,7 +1028,7 @@ impl MasterConnection {
                 }
                 steps.push(ControlStep {
                     action: "select_confirmed".to_string(),
-                    timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                 });
             }
             Ok(Err(e)) => return Err(MasterError::SendError(format!("等待选择确认失败: {}", e))),
@@ -1032,7 +1039,7 @@ impl MasterConnection {
         self.send_frame_with_event(&execute_frame, &format!("{} (Execute)", detail_prefix), label, ca, phase_event("execute")).await?;
         steps.push(ControlStep {
             action: "execute_sent".to_string(),
-            timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         });
 
         // Step 4: Wait for Execute confirmation (COT=7)
@@ -1048,7 +1055,7 @@ impl MasterConnection {
                 }
                 steps.push(ControlStep {
                     action: "execute_confirmed".to_string(),
-                    timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                 });
             }
             Ok(Err(e)) => return Err(MasterError::SendError(format!("等待执行确认失败: {}", e))),
@@ -1205,7 +1212,7 @@ async fn send_async_frame(
         }
     }
 
-    if let Some(ref lc) = log_collector {
+    if let Some(lc) = active_lc(log_collector) {
         let mut entry = LogEntry::with_raw_bytes(
             Direction::Tx,
             label,
@@ -1274,7 +1281,7 @@ fn receive_loop(
         match stream.read(&mut read_buf) {
             Ok(0) => {
                 state_tx.send_replace(MasterState::Disconnected);
-                if let Some(ref lc) = log_collector {
+                if let Some(lc) = active_lc(&log_collector) {
                     lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, "连接已关闭"));
                 }
                 break;
@@ -1286,7 +1293,7 @@ fn receive_loop(
                 || e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) => {
                 state_tx.send_replace(MasterState::Disconnected);
-                if let Some(ref lc) = log_collector {
+                if let Some(lc) = active_lc(&log_collector) {
                     lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, format!("读取错误,连接断开: {}", e)));
                 }
                 break;
@@ -1369,7 +1376,7 @@ fn receive_loop_mutex(
         match read_result {
             Ok(0) => {
                 state_tx.send_replace(MasterState::Disconnected);
-                if let Some(ref lc) = log_collector {
+                if let Some(lc) = active_lc(&log_collector) {
                     lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, "连接已关闭"));
                 }
                 break;
@@ -1397,7 +1404,7 @@ fn receive_loop_mutex(
             }
             Err(e) => {
                 state_tx.send_replace(MasterState::Disconnected);
-                if let Some(ref lc) = log_collector {
+                if let Some(lc) = active_lc(&log_collector) {
                     lc.try_add(LogEntry::new(Direction::Rx, FrameLabel::ConnectionEvent, format!("读取错误,连接断开: {}", e)));
                 }
                 break;
@@ -1458,7 +1465,7 @@ fn tick_timers<W: RawWrite>(
         TickAction::DropT1 => {
             shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
             state_tx.send_replace(MasterState::Error);
-            if let Some(ref lc) = log_collector {
+            if let Some(lc) = active_lc(log_collector) {
                 lc.try_add(LogEntry::new(
                     Direction::Rx,
                     FrameLabel::ConnectionEvent,
@@ -1470,13 +1477,13 @@ fn tick_timers<W: RawWrite>(
         TickAction::SendSFrame(rsn) => {
             let s_frame = build_s_frame(rsn);
             let _ = writer.write_raw(&s_frame);
-            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, format!("S 帧 (t2 触发的 ACK) RSN={}", rsn));
+            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, || format!("S 帧 (t2 触发的 ACK) RSN={}", rsn));
             true
         }
         TickAction::SendTestFr => {
             let f = TESTFR_ACT;
             let _ = writer.write_raw(&f);
-            log_tx_control_frame(log_collector, FrameLabel::UTestAct, &f, "TESTFR ACT (t3 触发心跳)".to_string());
+            log_tx_control_frame(log_collector, FrameLabel::UTestAct, &f, || "TESTFR ACT (t3 触发心跳)".to_string());
             true
         }
         TickAction::Idle => true,
@@ -1491,14 +1498,15 @@ fn build_s_frame(rsn: u16) -> [u8; 6] {
     [0x68, 0x04, 0x01, 0x00, rsn_bytes[0], rsn_bytes[1]]
 }
 
+/// `detail` 是闭包,只在日志开启时才求值,避免在禁用态白白 `format!()`。
 fn log_tx_control_frame(
     log_collector: &Option<Arc<LogCollector>>,
     label: FrameLabel,
     frame: &[u8],
-    detail: String,
+    detail: impl FnOnce() -> String,
 ) {
-    if let Some(lc) = log_collector {
-        lc.try_add(LogEntry::with_raw_bytes(Direction::Tx, label, detail, frame.to_vec()));
+    if let Some(lc) = active_lc(log_collector) {
+        lc.try_add(LogEntry::with_raw_bytes(Direction::Tx, label, detail(), frame.to_vec()));
     }
 }
 
@@ -1586,7 +1594,7 @@ fn process_received_frame<W: RawWrite>(
         if let Some(rsn) = force_ack {
             let s_frame = build_s_frame(rsn);
             let _ = writer.write_raw(&s_frame);
-            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, format!("S 帧 (w 阈值触发) RSN={}", rsn));
+            log_tx_control_frame(log_collector, FrameLabel::SFrame, &s_frame, || format!("S 帧 (w 阈值触发) RSN={}", rsn));
         }
     }
 }
@@ -1607,7 +1615,7 @@ fn drain_acked(pending_acks: &mut std::collections::VecDeque<u16>, peer_rsn: u16
 
 /// Log a received U-frame.
 fn log_frame(data: &[u8], log_collector: &Option<Arc<LogCollector>>) {
-    if let Some(ref lc) = log_collector {
+    if let Some(lc) = active_lc(log_collector) {
         if let Ok(frame) = crate::frame::parse_apci(data) {
             let summary = crate::frame::format_frame_summary(&frame);
             lc.try_add(LogEntry::with_raw_bytes(
@@ -1673,7 +1681,7 @@ fn parse_and_store_asdu(
                 .unwrap_or_else(|| format!("Type{}", asdu_type));
             let ca = u16::from_le_bytes([data[10], data[11]]);
 
-            if let Some(ref lc) = log_collector {
+            if let Some(lc) = active_lc(log_collector) {
                 let pn_str = if positive { "肯定" } else { "否定" };
                 let cot_str = match cot {
                     7 => "激活确认",
@@ -1699,7 +1707,7 @@ fn parse_and_store_asdu(
     }
     let ca = u16::from_le_bytes([data[10], data[11]]);
 
-    if let Some(ref lc) = log_collector {
+    if let Some(lc) = active_lc(log_collector) {
         let type_name = AsduTypeId::from_u8(asdu_type)
             .map(|t| t.name().to_string())
             .unwrap_or_else(|| format!("Type{}", asdu_type));

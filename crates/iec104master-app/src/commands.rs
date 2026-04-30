@@ -125,6 +125,8 @@ pub async fn create_connection(
     if let Some(v) = request.counter_interrogate_period_s { config.counter_interrogate_period_s = v; }
 
     let log_collector = Arc::new(LogCollector::new());
+    // 默认关闭,LogPanel 展开时由前端通过 set_logging_enabled 打开。
+    log_collector.set_enabled(false);
     let connection = MasterConnection::new(config.clone())
         .with_log_collector(log_collector.clone());
 
@@ -431,7 +433,7 @@ pub async fn send_control_command(
         return Ok(ControlResult {
             steps: vec![ControlStep {
                 action: "execute_sent".to_string(),
-                timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
             }],
             duration_ms: start.elapsed().as_millis() as u64,
         });
@@ -586,7 +588,7 @@ pub async fn send_raw_apdu(
             .collect::<Vec<_>>()
             .join(" "),
         byte_len: bytes.len(),
-        timestamp: chrono::Utc::now().format("%H:%M:%S%.3f").to_string(),
+        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
     })
 }
 
@@ -699,7 +701,7 @@ fn point_to_info(ca: u16, p: &iec104sim_core::data_point::DataPoint) -> Received
         category: p.asdu_type.category().name().to_string(),
         value: p.value.display(),
         quality_iv: p.quality.iv,
-        timestamp: p.timestamp.map(|t| t.format("%H:%M:%S%.3f").to_string()),
+        timestamp: p.timestamp.map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S%.3f").to_string()),
         update_seq: p.update_seq,
     }
 }
@@ -779,6 +781,20 @@ pub async fn clear_communication_logs(
 }
 
 #[tauri::command]
+pub async fn set_logging_enabled(
+    state: State<'_, AppState>,
+    connection_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let connections = state.connections.read().await;
+    let conn = connections
+        .get(&connection_id)
+        .ok_or_else(|| format!("connection {} not found", connection_id))?;
+    conn.log_collector.set_enabled(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn export_logs_csv(
     state: State<'_, AppState>,
     connection_id: String,
@@ -788,4 +804,21 @@ pub async fn export_logs_csv(
         .get(&connection_id)
         .ok_or_else(|| format!("connection {} not found", connection_id))?;
     Ok(conn.log_collector.export_csv().await)
+}
+
+// ---------------------------------------------------------------------------
+// Tool Commands — frame parsing
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn parse_hex(data: String) -> Result<Vec<u8>, String> {
+    iec104sim_core::tools::parse_hex_string(&data)
+        .map_err(|e| format!("{}", e))
+}
+
+#[tauri::command]
+pub fn parse_frame_full(data: String) -> Result<iec104sim_core::decode::ParsedFrame, String> {
+    let bytes = iec104sim_core::tools::parse_hex_string(&data)
+        .map_err(|e| format!("{}", e))?;
+    iec104sim_core::decode::parse_frame_full(&bytes)
 }

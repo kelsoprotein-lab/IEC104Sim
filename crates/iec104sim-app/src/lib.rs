@@ -42,6 +42,7 @@ pub fn run() {
             // Tool commands
             commands::parse_hex,
             commands::parse_apci,
+            commands::parse_frame_full,
             // Update commands
             update::check_for_update,
             update::install_update,

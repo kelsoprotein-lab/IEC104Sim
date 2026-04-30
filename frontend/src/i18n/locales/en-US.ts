@@ -33,6 +33,11 @@ const dict: DictShape = {
     titleAddStation: 'Add Station',
     titleRandomMutation: 'Random Mutation',
     titleCyclicSend: 'Cyclic Send',
+    checkUpdate: 'Check for Updates',
+    checkingUpdate: 'Checking…',
+    alreadyLatest: 'You are on the latest version',
+    parseFrame: 'Parse Frame',
+    parseFrameInLog: 'Parse this frame',
   },
   newServer: {
     title: 'New Server',

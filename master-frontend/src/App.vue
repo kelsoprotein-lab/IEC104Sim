@@ -9,8 +9,9 @@ import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import AppDialog from './components/AppDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import ParseFrameDialog from './components/ParseFrameDialog.vue'
 import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
-import type { ReceivedDataPointInfo } from './types'
+import type { ReceivedDataPointInfo, ChangedCategoriesMap, CategoryCountsMap } from './types'
 
 // Shared state
 const selectedConnectionId = ref<string | null>(null)
@@ -94,16 +95,25 @@ function refreshData() {
 }
 provide('refreshData', refreshData)
 
-// Per-connection tree flash effect: connId -> set of changed category labels
-const changedCategories = ref<Map<string, Set<string>>>(new Map())
+// Tree flash effect, keyed by (connId, ca, category) — CA 维度避免 CA=1 收到
+// 的变位让 CA=2/3 同名 category 节点也跟着闪黄。
+const changedCategories = ref<ChangedCategoriesMap>(new Map())
 provide('changedCategories', changedCategories)
 
-// Per-connection-per-CA category counts: connId -> Map<CA, Map<categoryLabel, count>>
-// (DataTable updates this from the points stream; ConnectionTree reads it.)
-const categoryCounts = ref<Map<string, Map<number, Map<string, number>>>>(new Map())
+// Realtime category counts (DataTable writes, ConnectionTree reads).
+const categoryCounts = ref<CategoryCountsMap>(new Map())
 provide('categoryCounts', categoryCounts)
 
 provide(dialogKey, { showAlert, showConfirm, showPrompt })
+
+// Frame parser dialog (opened from Toolbar button or LogPanel right-click)
+const parseFrameVisible = ref(false)
+const parseFramePrefill = ref<string>('')
+function openParseFrame(prefill?: string) {
+  parseFramePrefill.value = prefill ?? ''
+  parseFrameVisible.value = true
+}
+provide('openParseFrame', openParseFrame)
 
 // Listen for backend connection state events
 let unlistenConnState: (() => void) | null = null
@@ -211,6 +221,11 @@ function snoozeUpdate() {
       <LogPanel :expanded="logExpanded" @toggle="toggleLog" />
     </footer>
     <AppDialog />
+    <ParseFrameDialog
+      :visible="parseFrameVisible"
+      :prefill="parseFramePrefill"
+      @close="parseFrameVisible = false"
+    />
     <UpdateDialog
       :visible="updateVisible"
       :version="updateMeta?.version ?? ''"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, watch, onMounted, onUnmounted, computed, shallowRef, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { ReceivedDataPointInfo, IncrementalDataResponse, CommandType, ControlResult } from '../types'
+import type { ReceivedDataPointInfo, IncrementalDataResponse, CommandType, ControlResult, ChangedCategoriesMap, CategoryCountsMap } from '../types'
 import { getControlConfig } from '../types'
 import ControlDialog from './ControlDialog.vue'
 import { useI18n, localizeCategoryLabel } from '../i18n'
@@ -16,8 +16,8 @@ const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedCA = inject<Ref<number | null>>('selectedCA')!
 const selectedCategory = inject<Ref<string | null>>('selectedCategory')!
 const dataRefreshKey = inject<Ref<number>>('dataRefreshKey')!
-const changedCategories = inject<Ref<Map<string, Set<string>>>>('changedCategories')!
-const categoryCounts = inject<Ref<Map<string, Map<number, Map<string, number>>>>>('categoryCounts')!
+const changedCategories = inject<Ref<ChangedCategoriesMap>>('changedCategories')!
+const categoryCounts = inject<Ref<CategoryCountsMap>>('categoryCounts')!
 
 // Composite key: same IOA can carry different ASDU types AND can collide
 // across CAs on the same connection. Including CA prevents distinct
@@ -78,22 +78,30 @@ async function fetchData() {
       sinceSeq: lastSeq,
     })
     if (resp.points.length > 0) {
-      const cats = new Set<string>()
+      // 按 CA 分组记录本批次有变化的 category，否则 CA=1 收到一条变位会让
+      // CA=2/3 同名 category 节点也跟着 flash 黄。
+      const catsByCa = new Map<number, Set<string>>()
       for (const p of resp.points) {
         const k = pointKey(p)
         const old = dataMap.get(k)
         if (!old || old.value !== p.value) {
           markChanged(k)
-          cats.add(p.category)
+          let s = catsByCa.get(p.common_address)
+          if (!s) { s = new Set(); catsByCa.set(p.common_address, s) }
+          s.add(p.category)
         }
         dataMap.set(k, p)
       }
       updateDisplay()
-      // Notify tree about changed categories for THIS connection only
-      if (cats.size > 0 && currentConnId) {
-        const existing = changedCategories.value.get(currentConnId) ?? new Set<string>()
-        const merged = new Set(existing)
-        for (const c of cats) merged.add(c)
+      if (catsByCa.size > 0 && currentConnId) {
+        const existing = changedCategories.value.get(currentConnId) ?? new Map<number, Set<string>>()
+        const merged = new Map(existing)
+        for (const [ca, cats] of catsByCa) {
+          const prev = merged.get(ca) ?? new Set<string>()
+          const ns = new Set(prev)
+          for (const c of cats) ns.add(c)
+          merged.set(ca, ns)
+        }
         const nextMap = new Map(changedCategories.value)
         nextMap.set(currentConnId, merged)
         changedCategories.value = nextMap

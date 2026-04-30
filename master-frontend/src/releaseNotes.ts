@@ -4,7 +4,9 @@ export const RELEASES_URL = 'https://github.com/Carl-Dai/IEC60870-5-104-Simulato
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
-  '本次版本主要更新子站 (默认 16 ASDU 类型 + 同 IOA 多类型共存 + 写值/日志卡顿修复), 主站随版本号同步发布, 无功能改动',
-  '上一版 v1.2.0 亮点: IEC 60870-5-104 协议参数全面可配 + 真正的 t1/t2/t3/k/w 链路层状态机',
-  '上一版 v1.2.0 亮点: 工具栏 "检查更新" 按钮, 绕过 6h 节流和 24h snooze, 修复装新版后短期重启错过下一版的盲区',
+  '新增 "报文解析器" 工具: 顶栏点开后粘贴一段 hex APDU, 即刻得到 APCI / ASDU / IOA 三段式可视化, 覆盖 25 种 ASDU 类型 (监视方向 NA + 时标 TB/TD/TE/TF + 控制命令 + 系统命令)',
+  '通信日志条目右键即可 "解析此报文", 自动用该条 raw_bytes 填充, 无需复制粘贴',
+  '性能: 日志面板未展开时, master 收发热路径整段跳过 format!() 字符串构造 (LogCollector 加 enabled flag + active_lc helper), 大流量场景下 CPU 与堆压力明显下降',
+  '修复: master 接收循环 4 处编译错误 (active_lc 漏传引用), workspace 重新可构建, cargo test 65/65 全绿',
+  '改进: types.ts 抽出 ChangedCategoriesMap / CategoryCountsMap 别名, 三处组件不再重复嵌套泛型',
 ]

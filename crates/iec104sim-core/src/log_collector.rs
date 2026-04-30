@@ -1,4 +1,5 @@
 use crate::log_entry::{Direction, LogEntry};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -12,6 +13,7 @@ const MAX_LOG_ENTRIES: usize = 10000;
 #[derive(Debug, Clone)]
 pub struct LogCollector {
     entries: Arc<RwLock<Vec<LogEntry>>>,
+    enabled: Arc<AtomicBool>,
 }
 
 impl Default for LogCollector {
@@ -21,15 +23,25 @@ impl Default for LogCollector {
 }
 
 impl LogCollector {
-    /// Create a new empty log collector.
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(Vec::new())),
+            enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Add a log entry.
     pub async fn add(&self, entry: LogEntry) {
+        if !self.is_enabled() { return; }
         let mut entries = self.entries.write().await;
         if entries.len() >= MAX_LOG_ENTRIES {
             entries.remove(0);
@@ -39,6 +51,7 @@ impl LogCollector {
 
     /// Add a log entry (blocking version).
     pub fn add_blocking(&self, entry: LogEntry) {
+        if !self.is_enabled() { return; }
         let mut entries = self.entries.blocking_write();
         if entries.len() >= MAX_LOG_ENTRIES {
             entries.remove(0);
@@ -48,6 +61,7 @@ impl LogCollector {
 
     /// Add a log entry (non-blocking, safe to call from sync code within async runtime).
     pub fn try_add(&self, entry: LogEntry) {
+        if !self.is_enabled() { return; }
         if let Ok(mut entries) = self.entries.try_write() {
             if entries.len() >= MAX_LOG_ENTRIES {
                 entries.remove(0);

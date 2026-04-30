@@ -19,6 +19,8 @@ export type DictShape = {
     clockSync: string
     counterRead: string
     customControl: string
+    parseFrame: string
+    parseFrameInLog: string
     checkUpdate: string
     checkingUpdate: string
     alreadyLatest: string
@@ -241,6 +243,8 @@ const dict: DictShape = {
     clockSync: '时钟同步',
     counterRead: '累计量召唤',
     customControl: '自定义控制',
+    parseFrame: '报文解析',
+    parseFrameInLog: '解析此报文',
     checkUpdate: '检查更新',
     checkingUpdate: '检查中…',
     alreadyLatest: '已是最新版本',

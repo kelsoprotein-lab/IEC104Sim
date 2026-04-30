@@ -2,6 +2,39 @@
 
 本项目的所有重要变更记录在此文件。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-04-30
+
+### Highlights / 亮点
+
+- 🔬 **新增"报文解析器"工具,主子站双端可用** / Brand-new frame parser tool on both master and slave — 顶栏新增"报文解析"按钮,粘贴一段 hex APDU 即刻得到 APCI / ASDU / IOA 三段式可视化(帧类型 + 序列号 + ASDU 类型/COT/CA + 每个 IOA 的值/品质/CP56Time2a 时间戳/原始字节)。覆盖 25 种 ASDU(M_SP/DP/ST/BO/ME_NA/NB/NC/IT 监视方向,带或不带时标 + C_SC/DC/RC/SE_NA/NB/NC 控制 + C_IC/CI/CS 系统命令)。通信日志条目右键即可"解析此报文",自动用该条 raw_bytes 填充 / Top-bar "Parse Frame" button opens a dialog where you paste any IEC 104 APDU as hex and immediately get a three-section visual breakdown — APCI header, ASDU header, and per-IOA value/quality/CP56Time2a/raw bytes. Covers 25 ASDU types across monitor and control directions plus system commands. Right-click any log row to parse its raw bytes in one click.
+- ⚡ **日志面板未展开时,master 收发热路径不再构造日志字符串** / Master no longer pays for log strings when the log panel is collapsed — `LogCollector` 新增 enabled flag,关闭时所有 `format!()` 整段被 `active_lc()` helper 短路。在大流量场景(高频突发上送 + 周期总召唤)下,后端 CPU 占用与堆分配明显下降 / `LogCollector` gains an `enabled` flag; when off, every `format!()` site is short-circuited by an `active_lc()` helper. Heap allocations and CPU usage drop visibly under heavy I-frame traffic.
+- 🛠️ **修复 master 接收循环 4 处编译错误,解锁 v1.2.x 后续构建** / Fixed 4 build errors in master receive loop — `active_lc(log_collector)` 在两条接收循环的 disconnect / error 分支上误传值而非引用,导致 `cargo build -p iec104sim-core` 直接失败。本次补回 `&`,workspace 与 65 个测试全绿 / 4 spots called `active_lc(log_collector)` instead of `active_lc(&log_collector)` in disconnect/error paths, breaking `cargo build` on the whole workspace. Now fixed and `cargo test --workspace` is green (65 tests pass).
+- 🧪 **新增 10 项 decode 单元测试** / 10 new decode unit tests — 覆盖 U/S/I 帧、SQ=1 多点序列、CP56Time2a 时标、控制命令响应、起始字节错、未知 ASDU 类型(进 warnings 而非 panic)、APDU 长度不一致 / U/S/I frames, SQ=1 multi-point sequences, CP56Time2a timestamps, control responses, invalid start bytes, unknown ASDU types (surfaced as warnings, not panics), and APDU length mismatches.
+
+### Added 新增
+
+- **iec104sim-core**: 新增 `decode` 模块,导出 `ParsedFrame` / `ParsedApci` / `ParsedAsdu` / `ParsedObject` / `Cp56Time2a` 与 `parse_frame_full(&[u8]) -> Result<ParsedFrame, String>`。结构全部 serde 友好,Tauri 直接序列化到前端 / New `decode` module exposes `ParsedFrame` / `ParsedApci` / `ParsedAsdu` / `ParsedObject` / `Cp56Time2a` plus `parse_frame_full(&[u8]) -> Result<ParsedFrame, String>`. All structs are serde-ready for Tauri.
+- **主站后端**: 新增 `parse_hex` 与 `parse_frame_full` Tauri 命令(主站此前完全没有任何报文解析能力) / `parse_hex` and `parse_frame_full` commands added to the master backend (which had no parsing commands at all before).
+- **子站后端**: 在保留 `parse_apci` 字符串摘要命令的基础上新增 `parse_frame_full`,返回结构化 `ParsedFrame` / Slave keeps the existing `parse_apci` summary command and adds `parse_frame_full` for the structured payload.
+- **主站前端**: 新增 `ParseFrameDialog.vue`(Catppuccin 暗色主题、Teleport、APCI/ASDU/IOA 三段卡片、内置 6 个常用模板、警告聚合、Ctrl+Enter 解析快捷键);Toolbar 工具组末尾"报文解析"按钮;`App.vue` 通过 `provide('openParseFrame')` 共享开启函数 / New `ParseFrameDialog.vue` (Catppuccin dark, Teleport, three-section cards, six built-in templates, warning aggregation, Ctrl+Enter shortcut). New "Parse Frame" toolbar button. `App.vue` shares an `openParseFrame(prefill?)` function via `provide`.
+- **主站前端**: `LogPanel.vue` 行级 `@contextmenu` 右键触发"解析此报文",自动以该条 `raw_bytes` 调用 `openParseFrame()`(空 raw_bytes 行不响应) / Right-click on any log row with raw bytes to open the parser pre-filled with that frame.
+- **子站前端**: 镜像主站做法,组件命名一致;`Toolbar.vue`、`LogPanel.vue`、`App.vue`、`types.ts`、`i18n/locales/{zh-CN,en-US}.ts` 同步更新 / Slave mirrors the master integration; component names kept identical for cross-app maintenance.
+- **i18n**: 主子站新增 `toolbar.parseFrame` 与 `toolbar.parseFrameInLog` 两条 key(中英) / Added `toolbar.parseFrame` and `toolbar.parseFrameInLog` to both apps in zh-CN and en-US.
+
+### Changed 改进
+
+- **iec104sim-core**: `LogCollector` 增加 `enabled: Arc<AtomicBool>` 字段,公开 `is_enabled()` / `set_enabled()`;`master.rs` 引入 `#[inline] fn active_lc(...)` helper,把所有 `if let Some(ref lc) = self.log_collector` 模式替换成 `if let Some(lc) = active_lc(&self.log_collector)`,关闭日志时整段 `format!()` 被跳过 / `LogCollector` gains an `enabled: Arc<AtomicBool>` plus `is_enabled()` / `set_enabled()`; `master.rs` introduces an `#[inline] active_lc(...)` helper that replaces every `if let Some(ref lc) = self.log_collector` site, so disabled-log paths skip the `format!()` cost entirely.
+- **iec104sim-app**: `check_for_update` Tauri 命令新增 `force: Option<bool>` 参数;`force=true` 绕过 6h 节流和 24h snooze,启动自动检查仍走原节流逻辑(配合 v1.2.0 工具栏"检查更新"按钮的实装) / `check_for_update` gains an optional `force: bool`; when true it bypasses both the 6 h throttle and the 24 h snooze (pairing with the v1.2.0 toolbar button).
+- **主站前端**: `types.ts` 抽出 `ChangedCategoriesMap` 与 `CategoryCountsMap` 类型别名,`App.vue` / `ConnectionTree.vue` / `DataTable.vue` 共用,消除三处嵌套泛型重复 / Pulled `ChangedCategoriesMap` and `CategoryCountsMap` aliases out so `App.vue`, `ConnectionTree.vue`, and `DataTable.vue` stop duplicating the nested generic.
+
+### Fixed 修复
+
+- **主站后端**: `process_received_frame` 与两条接收循环 disconnect/error 分支共 4 处调用 `active_lc(log_collector)` 误传值而不是引用,导致 `cargo build -p iec104sim-core` 直接编译失败。已修为 `active_lc(&log_collector)`,workspace 重新可构建 / 4 sites in `process_received_frame` and the two receive loops were calling `active_lc(log_collector)` (passing by value into a `&Option<...>` parameter), breaking `cargo build` on the whole workspace. Fixed by passing `&log_collector`.
+
+### Tests 测试
+
+- **iec104sim-core**: 新增 `decode::tests` 共 10 个单元测试。`cargo test -p iec104sim-core --lib` 65 通过 0 失败 / 10 new unit tests in `decode::tests`. `cargo test -p iec104sim-core --lib` runs 65 tests, all green.
+
 ## [1.2.1] - 2026-04-29
 
 ### Highlights / 亮点

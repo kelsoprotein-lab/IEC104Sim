@@ -510,7 +510,9 @@ pub async fn list_data_points(
                 comment: def.map(|d| d.comment.clone()).unwrap_or_default(),
                 value: p.value.display(),
                 quality_iv: p.quality.iv,
-                timestamp: p.timestamp.map(|t| t.format("%H:%M:%S%.3f").to_string()),
+                // DataPoint.timestamp 内部存 UTC 便于无歧义比较；展示给用户时
+                // 转为本地时区,这样 UI 看到的"时间戳"和系统挂钟一致。
+                timestamp: p.timestamp.map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S%.3f").to_string()),
             }
         })
         .collect();
@@ -809,4 +811,11 @@ pub fn parse_apci(data: String) -> Result<String, String> {
     let frame = iec104sim_core::frame::parse_apci(&bytes)
         .map_err(|e| format!("{}", e))?;
     Ok(iec104sim_core::frame::format_frame_summary(&frame))
+}
+
+#[tauri::command]
+pub fn parse_frame_full(data: String) -> Result<iec104sim_core::decode::ParsedFrame, String> {
+    let bytes = iec104sim_core::tools::parse_hex_string(&data)
+        .map_err(|e| format!("{}", e))?;
+    iec104sim_core::decode::parse_frame_full(&bytes)
 }
